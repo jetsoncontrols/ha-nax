@@ -39,7 +39,7 @@ class NaxApi:
     
     def get_logged_in(self) -> bool:
         """Returns True if logged in, False if not."""
-        return self.loginResponse.status_code == 200
+        return self.loginResponse is not None and self.loginResponse.status_code == 200
 
     def get_base_url(self) -> str | None:
         if self.ip is None:
