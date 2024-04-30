@@ -13,7 +13,7 @@ class NaxApi:
 
     def __init__(self, ip: str, username: str, password: str) -> None:
         """Initializes the NaxApi class."""
-        requests.packages.urllib3.disable_warnings()  # Disable SSL warnings
+        requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for self signed certificates
         self.ip = ip
         self.username = username
         self.password = password
@@ -25,7 +25,7 @@ class NaxApi:
                 url=self.get_login_url(), verify=False, timeout=5
             )
         except (ConnectTimeout, MaxRetryError) as e:
-            return False, "Could not connect"
+            return False, f"Could not connect: {e.reason}"
         self.loginResponse = requests.post(
             url=self.get_login_url(),
             cookies={"TRACKID": userLoginGetResponse.cookies["TRACKID"]},
