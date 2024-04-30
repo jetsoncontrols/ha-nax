@@ -1,3 +1,4 @@
+import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform, EVENT_HOMEASSISTANT_STOP
 from homeassistant.config_entries import ConfigEntry
@@ -10,6 +11,7 @@ from .const import (
     CONF_PASSWORD,
 )
 
+_LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.MEDIA_PLAYER]
 
 
@@ -23,13 +25,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
 
     async def on_hass_stop(event):
-        api.logout()
+        await hass.async_add_executor_job(api.logout)
 
-    entry.async_on_unload(
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
-    )
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    return api is not None
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
+
+    connected, connect_message = await hass.async_add_executor_job(api.login)
+    if connected:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        return True
+    _LOGGER.error(f"Could not connect to NAX: {connect_message}")
+    return False
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -37,5 +42,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         api = hass.data[DOMAIN].pop(entry.entry_id)
-        await api.logout()
+        await hass.async_add_executor_job(api.logout)
     return unload_ok

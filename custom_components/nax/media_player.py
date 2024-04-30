@@ -1,7 +1,5 @@
 """Support for Nax media player."""
 
-# https://developers.home-assistant.io/docs/core/entity/media-player?_highlight=media
-
 import logging
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -23,12 +21,16 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Load NAX media players"""
-    name: str = config_entry.data[CONF_NAME]
-    assert config_entry.unique_id is not None
-    api: NaxApi = hass.data[DOMAIN][config_entry.unique_id]
+    pass
+    # api: NaxApi = hass.data[DOMAIN][config_entry.unique_id]
+
+    # for device in api.devices:
+    #     async_add_entities([NaxMediaPlayer(device.name, config_entry.unique_id, api)])
+
     # async_add_entities([NaxMediaPlayer(name, config_entry.unique_id, api)])
 
 
+# https://developers.home-assistant.io/docs/core/entity/media-player?_highlight=media
 class NaxMediaPlayer(MediaPlayerEntity):
     """Representation of an NAX media player."""
 
