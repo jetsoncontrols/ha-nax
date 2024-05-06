@@ -7,7 +7,7 @@ print(f"Login {str(connected)}: " + message)
 
 if connected:
     # print(json.dumps(naxApi.get_request(path="/Device/InputSources"), indent=2))
-    print(json.dumps(naxApi.get_request(path="/Device/DeviceInfo"), indent=2))
+    # print(json.dumps(naxApi.get_request(path="/Device/DeviceInfo"), indent=2))
     # print(json.dumps(naxApi.get_request(path="/Device/AvMatrixRouting"), indent=2))
     # include_data = {
     #     "Device": {
@@ -17,11 +17,34 @@ if connected:
     #     }
     # }
 
-    # print(
-    #     json.dumps(
-    #         naxApi.post_request(path="/Device/DeviceOperations", json_data=include_data)
-    #     )
-    # )
+    # {
+    #                     "Device": {
+    #                         "DeviceOperations": {
+    #                             "EnterStandby": False,
+    #                         }
+    #                     }
+    #                 }
+
+    print(
+        json.dumps(
+            naxApi.post_request(
+                path="/Device/ZoneOutputs/Zones/Zone01/ZoneAudio",
+                json_data={
+                    "Device": {
+                        "ZoneOutputs": {
+                            "Zones": {
+                                "Zone01": {
+                                    "ZoneAudio": {
+                                        "Volume": 50,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            )
+        )
+    )
 
     # print(json.dumps(naxApi.get_request(path="/Device/AvMatrixRouting/Longpoll"), indent=2))
 

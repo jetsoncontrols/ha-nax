@@ -74,9 +74,6 @@ class NaxApi:
             return None
         return f"wss://{self.ip}/websockify"
 
-    def get_request(self, path: str):
-        return self.__get_request(path)
-
     def __get_request(self, path: str):
         if self.get_logged_in():
             get_request = requests.get(
@@ -119,10 +116,81 @@ class NaxApi:
                     f"Post request for {post_request.url} failed: {post_request.status_code}"
                 )
 
-    def get_device_info(self) -> Any:
+    def __get_device_info(self) -> Any:
         return self.__get_request("/Device/DeviceInfo")
 
-    def get_device_name(self) -> Any:
-        device_info = self.get_device_info()
+    def get_device_name(self) -> str | None:
+        device_info = self.__get_device_info()
         if device_info is not None:
             return device_info["Device"]["DeviceInfo"]["Name"]
+
+    def get_device_mac_address(self) -> str | None:
+        device_info = self.__get_device_info()
+        if device_info is not None:
+            return device_info["Device"]["DeviceInfo"]["MacAddress"]
+
+    def get_device_manufacturer(self) -> str | None:
+        device_info = self.__get_device_info()
+        if device_info is not None:
+            return device_info["Device"]["DeviceInfo"]["Manufacturer"]
+
+    def get_device_model(self) -> str | None:
+        device_info = self.__get_device_info()
+        if device_info is not None:
+            return device_info["Device"]["DeviceInfo"]["Model"]
+
+    def get_device_firmware_version(self) -> str | None:
+        device_info = self.__get_device_info()
+        if device_info is not None:
+            return device_info["Device"]["DeviceInfo"]["DeviceVersion"]
+
+    def get_device_serial_number(self) -> str | None:
+        device_info = self.__get_device_info()
+        if device_info is not None:
+            return device_info["Device"]["DeviceInfo"]["SerialNumber"]
+
+    def __get_zone_outputs(self) -> Any:
+        zone_outputs_json = self.__get_request("/Device/ZoneOutputs")
+        if zone_outputs_json is not None:
+            return zone_outputs_json["Device"]["ZoneOutputs"]["Zones"]
+
+    def get_all_zone_outputs(self) -> list[str]:
+        result = []
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            for zone_output in zone_outputs_json:
+                result.append(zone_output)
+        return result
+
+    def get_all_zone_outputs_names(self) -> {str: str}:
+        result = {}
+
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            for zone_output in zone_outputs_json:
+                result[zone_output] = zone_outputs_json[zone_output]["Name"]
+
+        return result
+
+    def set_zone_volume(self, zone_output: str, volume: float) -> None:
+        self.__post_request(
+            path=f"/Device/ZoneOutputs/Zones/{zone_output}/ZoneAudio",
+            json_data={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            zone_output: {
+                                "ZoneAudio": {
+                                    "Volume": volume,
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+    def get_zone_volume(self, zone_output: str) -> float | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Volume"]
