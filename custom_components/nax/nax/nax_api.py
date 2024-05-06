@@ -22,14 +22,17 @@ class NaxApi:
         """Logs in to the NAX system."""
         try:
             userLoginGetResponse = requests.get(
-                url=self.get_login_url(), verify=False, timeout=5
+                url=self.__get_login_url(), verify=False, timeout=5
             )
         except (ConnectTimeout, MaxRetryError) as e:
             return False, f"Could not connect: {e.reason}"
         self.loginResponse = requests.post(
-            url=self.get_login_url(),
+            url=self.__get_login_url(),
             cookies={"TRACKID": userLoginGetResponse.cookies["TRACKID"]},
-            headers={"Origin": self.get_base_url(), "Referer": self.get_login_url()},
+            headers={
+                "Origin": self.get_base_url(),
+                "Referer": self.__get_login_url(),
+            },
             data={"login": self.username, "passwd": self.password},
             verify=False,
             timeout=5,
@@ -49,7 +52,7 @@ class NaxApi:
 
     def logout(self) -> None:
         """Logs out of the NAX system."""
-        self.get_request(path="/logout")
+        self.__get_request(path="/logout")
         self.loginResponse = None
 
     def get_logged_in(self) -> bool:
@@ -61,17 +64,20 @@ class NaxApi:
             return None
         return f"https://{self.ip}"
 
-    def get_login_url(self) -> str | None:
+    def __get_login_url(self) -> str | None:
         if self.get_base_url() is None:
             return None
         return f"{self.get_base_url()}/userlogin.html"
 
-    def get_websocket_url(self) -> str | None:
+    def __get_websocket_url(self) -> str | None:
         if self.ip is None:
             return None
         return f"wss://{self.ip}/websockify"
 
     def get_request(self, path: str):
+        return self.__get_request(path)
+
+    def __get_request(self, path: str):
         if self.get_logged_in():
             get_request = requests.get(
                 url=self.get_base_url() + path,
@@ -91,6 +97,9 @@ class NaxApi:
                 )
 
     def post_request(self, path: str, json_data: Any | None) -> Any:
+        return self.__post_request(path, json_data)
+
+    def __post_request(self, path: str, json_data: Any | None) -> Any:
         if self.get_logged_in():
             post_request = requests.post(
                 url=self.get_base_url() + path,
@@ -109,3 +118,11 @@ class NaxApi:
                 print(
                     f"Post request for {post_request.url} failed: {post_request.status_code}"
                 )
+
+    def get_device_info(self) -> Any:
+        return self.__get_request("/Device/DeviceInfo")
+
+    def get_device_name(self) -> Any:
+        device_info = self.get_device_info()
+        if device_info is not None:
+            return device_info["Device"]["DeviceInfo"]["Name"]

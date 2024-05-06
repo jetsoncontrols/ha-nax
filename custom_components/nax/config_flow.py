@@ -39,15 +39,13 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     username=user_input[CONF_USERNAME],
                     password=user_input[CONF_PASSWORD],
                 )
-                # await hass.async_add_executor_job(getkWh, access_token)
                 connected, message = await self.hass.async_add_executor_job(api.login)
                 if not connected:
                     errors["base"] = message
                 else:
-                    device_info = await self.hass.async_add_executor_job(
-                        api.get_request, "/Device/DeviceInfo"
+                    device_name = await self.hass.async_add_executor_job(
+                        api.get_device_name
                     )
-                    device_name = device_info["Device"]["DeviceInfo"]["Name"]
                     return self.async_create_entry(title=device_name, data=user_input)
         return self.async_show_form(
             step_id="user", data_schema=DATA_SCHEME, errors=errors
