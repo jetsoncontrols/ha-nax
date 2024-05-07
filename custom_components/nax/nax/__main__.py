@@ -25,26 +25,26 @@ if connected:
     #                     }
     #                 }
 
-    print(
-        json.dumps(
-            naxApi.post_request(
-                path="/Device/ZoneOutputs/Zones/Zone01/ZoneAudio",
-                json_data={
-                    "Device": {
-                        "ZoneOutputs": {
-                            "Zones": {
-                                "Zone01": {
-                                    "ZoneAudio": {
-                                        "Volume": 50,
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-            )
-        )
-    )
+    # print(
+    #     json.dumps(
+    #         naxApi.post_request(
+    #             path="/Device/ZoneOutputs/Zones/Zone01/ZoneAudio",
+    #             json_data={
+    #                 "Device": {
+    #                     "ZoneOutputs": {
+    #                         "Zones": {
+    #                             "Zone01": {
+    #                                 "ZoneAudio": {
+    #                                     "Volume": 50,
+    #                                 }
+    #                             }
+    #                         }
+    #                     }
+    #                 }
+    #             },
+    #         )
+    #     )
+    # )
 
     # print(json.dumps(naxApi.get_request(path="/Device/AvMatrixRouting/Longpoll"), indent=2))
 
@@ -57,4 +57,5 @@ if connected:
     #         )
     #     )
 
-    naxApi.logout()
+    # naxApi.logout()
+    pass

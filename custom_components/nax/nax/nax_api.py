@@ -1,8 +1,13 @@
+from websockets import WebSocketClientProtocol
+import websockets
+from websockets.extensions import permessage_deflate
+import asyncio
 from typing import Any
 from urllib3.exceptions import MaxRetryError
 import requests
 from requests import ConnectTimeout
 import json
+import ssl
 
 
 class NaxApi:
@@ -48,7 +53,86 @@ class NaxApi:
         self.loginResponse.cookies.set(
             "TRACKID", userLoginGetResponse.cookies["TRACKID"]
         )
+
+        asyncio.run(self.ws_client())
+
         return True, "Connected successfully"
+
+    async def ws_client(self):
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        headers = {
+            "Upgrade": "websocket",
+            "Connection": "Upgrade",
+            # "Host": self.ip,
+            "User-Agent": "advanced-rest-client",
+            "Origin": self.get_base_url(),
+            "Referer": self.__get_login_url(),
+            "Sec-WebSocket-Version": "13",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "en-US,en;q=0.9",
+            "X-CREST-XSRF-TOKEN": self.loginResponse.headers["X-CREST-XSRF-TOKEN"],
+            # "Sec-WebSocket-Key": self.loginResponse.cookies["TRACKID"],  # ???
+            "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
+            "Cookie": "; ".join(
+                [
+                    "%s=%s" % (i, j)
+                    for i, j in self.loginResponse.cookies.get_dict().items()
+                ]
+            ),
+        }
+
+        print(self.__get_websocket_url())
+        print(headers)
+
+        try:
+            client: WebSocketClientProtocol = await websockets.connect(
+                self.__get_websocket_url(),
+                ssl=ssl_context,
+                extra_headers=headers,
+                extensions=[
+                    permessage_deflate.ClientPerMessageDeflateFactory(
+                        server_max_window_bits=11,
+                        client_max_window_bits=11,
+                        compress_settings={"memLevel": 4},
+                    ),
+                ],
+            )  # , ssl=ssl_context , extra_headers=headers
+
+            await client.send("/Device/ZoneOutputs")
+            print("Connected to websocket")
+            while True:
+                greeting = await client.recv()
+                print(f"Received: {greeting}")
+
+        except ssl.SSLCertVerificationError as sslcve:
+            print(f"Exception: {sslcve}")
+        except websockets.exceptions.InvalidStatusCode as isc:
+            print(f"InvalidStatusCode: {isc}")
+            print(isc.headers)
+
+        # print(headers)
+
+        # async with websockets.connect(self.get_websocket_url(), ssl=ssl_context, extra_headers=headers) as websocket:
+        #     print("Connected to websocket")
+        #     websocket.send("/Device/DiscoveryConfig/DiscoveryAgent")
+        #     greeting = await websocket.recv()
+        #     print(f"Received: {greeting}")
+
+        # async for websocket in websockets.connect(self.get_websocket_url(), ssl=ssl_context, extra_headers=headers):
+        #     try:
+        #         # await websocket.send("Hello there!")
+        #         print("Connected to websocket")
+        #         greeting = await websocket.recv()
+        #         print(f"Received: {greeting}")
+        #     except websockets.exceptions.InvalidStatusCode as isc:
+        #         print(f"InvalidStatusCode: {isc}")
+        #     #     # continue
+        #     except Exception as e:
+        #         print(f"Exception: {e}")
+        #     #     # continue
 
     def logout(self) -> None:
         """Logs out of the NAX system."""
