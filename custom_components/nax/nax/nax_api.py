@@ -1,3 +1,4 @@
+import logging
 from websockets import WebSocketClientProtocol
 import websockets
 from websockets.extensions import permessage_deflate
@@ -8,13 +9,21 @@ import requests
 from requests import ConnectTimeout
 import json
 import ssl
+import deepmerge
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class NaxApi:
-    loginResponse: requests.Response = None
+
     ip: str = None
     username: str = None
     password: str = None
+    loginResponse: requests.Response = None
+    ws_task: asyncio.Task = None
+    ws_client: WebSocketClientProtocol = None
+
+    _json_state: dict[str, Any] = {}
 
     def __init__(self, ip: str, username: str, password: str) -> None:
         """Initializes the NaxApi class."""
@@ -53,27 +62,28 @@ class NaxApi:
         self.loginResponse.cookies.set(
             "TRACKID", userLoginGetResponse.cookies["TRACKID"]
         )
-
-        asyncio.run(self.ws_client())
-
         return True, "Connected successfully"
 
-    async def ws_client(self):
+    async def start_websocket(self) -> None:
+        self.ws_client = await self.get_ws_client()
+        if self.ws_client is not None:
+            self.ws_task = asyncio.create_task(self.ws_handler(self.ws_client))
+
+    async def get_ws_client(self) -> WebSocketClientProtocol | None:
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-
         headers = {
-            "Upgrade": "websocket",
-            "Connection": "Upgrade",
+            # "Upgrade": "websocket",
+            # "Connection": "Upgrade",
             # "Host": self.ip,
-            "User-Agent": "advanced-rest-client",
+            # "User-Agent": "advanced-rest-client",
             "Origin": self.get_base_url(),
-            "Referer": self.__get_login_url(),
-            "Sec-WebSocket-Version": "13",
+            # "Referer": self.__get_login_url(),
+            # "Sec-WebSocket-Version": "13",
             "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            "X-CREST-XSRF-TOKEN": self.loginResponse.headers["X-CREST-XSRF-TOKEN"],
+            # "Accept-Language": "en-US,en;q=0.9",
+            # "X-CREST-XSRF-TOKEN": self.loginResponse.headers["X-CREST-XSRF-TOKEN"],
             # "Sec-WebSocket-Key": self.loginResponse.cookies["TRACKID"],  # ???
             "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
             "Cookie": "; ".join(
@@ -83,9 +93,6 @@ class NaxApi:
                 ]
             ),
         }
-
-        print(self.__get_websocket_url())
-        print(headers)
 
         try:
             client: WebSocketClientProtocol = await websockets.connect(
@@ -99,45 +106,49 @@ class NaxApi:
                         compress_settings={"memLevel": 4},
                     ),
                 ],
-            )  # , ssl=ssl_context , extra_headers=headers
-
-            await client.send("/Device/ZoneOutputs")
-            print("Connected to websocket")
-            while True:
-                greeting = await client.recv()
-                print(f"Received: {greeting}")
-
+            )
+            _LOGGER.info("Connected to websocket")
+            return client
         except ssl.SSLCertVerificationError as sslcve:
-            print(f"Exception: {sslcve}")
+            _LOGGER.exception(sslcve)
         except websockets.exceptions.InvalidStatusCode as isc:
-            print(f"InvalidStatusCode: {isc}")
-            print(isc.headers)
+            _LOGGER.exception(isc)
+        return None
 
-        # print(headers)
+    async def ws_handler(self, client: WebSocketClientProtocol) -> None:
+        receive_buffer = ""
+        await client.send("/Device/")
 
-        # async with websockets.connect(self.get_websocket_url(), ssl=ssl_context, extra_headers=headers) as websocket:
-        #     print("Connected to websocket")
-        #     websocket.send("/Device/DiscoveryConfig/DiscoveryAgent")
-        #     greeting = await websocket.recv()
-        #     print(f"Received: {greeting}")
-
-        # async for websocket in websockets.connect(self.get_websocket_url(), ssl=ssl_context, extra_headers=headers):
-        #     try:
-        #         # await websocket.send("Hello there!")
-        #         print("Connected to websocket")
-        #         greeting = await websocket.recv()
-        #         print(f"Received: {greeting}")
-        #     except websockets.exceptions.InvalidStatusCode as isc:
-        #         print(f"InvalidStatusCode: {isc}")
-        #     #     # continue
-        #     except Exception as e:
-        #         print(f"Exception: {e}")
-        #     #     # continue
+        while True:
+            try:
+                receive_buffer += await client.recv()
+                new_message_json = json.loads(receive_buffer)
+                receive_buffer = ""
+                self._json_state = deepmerge.always_merger.merge(
+                    self._json_state, new_message_json
+                )
+            except json.JSONDecodeError:
+                # Not a valid JSON message yet, keep receiving
+                continue
+            except websockets.exceptions.ConnectionClosedOK:
+                break
+            except websockets.exceptions.ConnectionClosedError:
+                _LOGGER.warning("Connection closed")
+                self.login()
+                break
+            except Exception as e:
+                _LOGGER.exception(e)
 
     def logout(self) -> None:
         """Logs out of the NAX system."""
         self.__get_request(path="/logout")
         self.loginResponse = None
+        if self.ws_task is not None:
+            self.ws_task.cancel()
+            self.ws_task = None
+        if self.ws_client is not None:
+            self.ws_client.close()
+            self.ws_client = None
 
     def get_logged_in(self) -> bool:
         """Returns True if logged in, False if not."""

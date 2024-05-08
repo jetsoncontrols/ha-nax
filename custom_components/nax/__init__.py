@@ -1,8 +1,13 @@
 import logging
 from homeassistant.core import HomeAssistant
-from homeassistant.const import Platform, EVENT_HOMEASSISTANT_STOP
+from homeassistant.const import (
+    Platform,
+    EVENT_HOMEASSISTANT_STOP,
+    EVENT_HOMEASSISTANT_STARTED,
+)
 from homeassistant.config_entries import ConfigEntry
 from .nax.nax_api import NaxApi
+import asyncio
 
 from .const import (
     DOMAIN,
@@ -27,11 +32,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def on_hass_stop(event):
         await hass.async_add_executor_job(api.logout)
 
+    async def on_hass_started(event):
+        await api.start_websocket()
+
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
 
+    # connected, connect_message = await hass.add_job(api.login)
     connected, connect_message = await hass.async_add_executor_job(api.login)
     if connected:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_hass_started)
         return True
     _LOGGER.error(f"Could not connect to NAX: {connect_message}")
     return False
