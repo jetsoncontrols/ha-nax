@@ -1,0 +1,17 @@
+from deepmerge import Merger
+
+
+def merge_dict(config: Merger, path, base, nxt):
+    if not nxt:
+        return nxt
+    for k, v in nxt.items():
+        if k not in base:
+            base[k] = v
+        else:
+            base[k] = config.value_strategy(path + [k], base[k], v)
+    return base
+
+
+nax_custom_merger: Merger = Merger(
+    [(list, "append"), (dict, merge_dict), (set, "union")], ["override"], ["override"]
+)

@@ -10,7 +10,7 @@ import requests
 from requests import ConnectTimeout
 import json
 import ssl
-import deepmerge
+from .misc.custom_merger import nax_custom_merger
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -122,9 +122,9 @@ class NaxApi:
                 receive_buffer += await client.recv()
                 new_message_json = json.loads(receive_buffer)
                 receive_buffer = ""
-                self._json_state = deepmerge.always_merger.merge(
-                    self._json_state, new_message_json
-                )
+                if "Actions" in new_message_json:
+                    continue
+                nax_custom_merger.merge(self._json_state, new_message_json)
                 new_message_paths = self._get_json_paths(new_message_json)
                 matching_paths = [
                     path
@@ -308,12 +308,17 @@ class NaxApi:
 
     def get_zone_audio_source(self, zone_output: str) -> str | None:
         if self._json_state is not None:
-            # print(self._json_state["Device"]["AvMatrixRouting"]["Routes"])
             if zone_output in self._json_state["Device"]["AvMatrixRouting"]["Routes"]:
-                return self._json_state["Device"]["AvMatrixRouting"]["Routes"][
-                    zone_output
-                ]["AudioSource"]
-            return None
+                if (
+                    "AudioSource"
+                    in self._json_state["Device"]["AvMatrixRouting"]["Routes"][
+                        zone_output
+                    ]
+                ):
+                    return self._json_state["Device"]["AvMatrixRouting"]["Routes"][
+                        zone_output
+                    ]["AudioSource"]
+        return None
 
     def get_zone_volume(self, zone_output: str) -> float | None:
         zone_outputs_json = self.__get_zone_outputs()
@@ -378,6 +383,4 @@ class NaxApi:
                 }
             }
         }
-        print("setting zone audio source")
-        print(json.dumps(json_data))
         await self.ws_client.send(json.dumps(json_data))

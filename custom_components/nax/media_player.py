@@ -56,11 +56,12 @@ class NaxMediaPlayer(MediaPlayerEntity):
     _entity_id: str = None
 
     _attr_device_class = "speaker"
+    _attr_should_poll = False
     _attr_supported_features = (
         MediaPlayerEntityFeature.VOLUME_SET
         | MediaPlayerEntityFeature.VOLUME_STEP
         | MediaPlayerEntityFeature.VOLUME_MUTE
-        | MediaPlayerEntityFeature.BROWSE_MEDIA
+        # | MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
         # | MediaPlayerEntityFeature.TURN_ON
         | MediaPlayerEntityFeature.TURN_OFF
@@ -77,9 +78,9 @@ class NaxMediaPlayer(MediaPlayerEntity):
         self._attr_unique_id = unique_id
         self.zone_output = zone_output
 
-        threading.Timer(1.0, self.subscribe_api_data_updates).start()
+        threading.Timer(1.0, self.subscribtions).start()
 
-    def subscribe_api_data_updates(self) -> None:
+    def subscribtions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Volume",
             self._update_volume,
@@ -89,9 +90,10 @@ class NaxMediaPlayer(MediaPlayerEntity):
             self._update_mute,
         )
         self.api.subscribe_data_updates(
-            f"Device.AvMatrixRouting.Routes.{self.zone_output}.AudioSource",
+            f"Device.AvMatrixRouting.Routes.{self.zone_output}",
             self._update_zone_audio_source,
         )
+        self.api.subscribe_connection_updates(self._update_connection)
 
     @callback
     def _update_volume(self, path: str, data: Any) -> None:
@@ -105,10 +107,9 @@ class NaxMediaPlayer(MediaPlayerEntity):
     def _update_zone_audio_source(self, path: str, data: Any) -> None:
         self.schedule_update_ha_state(force_refresh=False)
 
-    @property
-    def should_poll(self) -> bool:
-        """Return if hass should poll this entity"""
-        return False
+    @callback
+    def _update_connection(self, connected: bool) -> None:
+        self.schedule_update_ha_state(force_refresh=False)
 
     @property
     def unique_id(self) -> str:
@@ -133,9 +134,8 @@ class NaxMediaPlayer(MediaPlayerEntity):
     @property
     def state(self) -> MediaPlayerState | None:
         """Return the state of the device."""
-        logged_in = self.api.get_logged_in()
-        if logged_in is False:
-            return None
+        if self.api.get_zone_audio_source(self.zone_output) is not None:
+            return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
 
     @property
@@ -243,5 +243,4 @@ class NaxMediaPlayer(MediaPlayerEntity):
         source_split = source_name.split(" (", 1)
         # source_name = source_split[1][:-1]
         source = source_split[0]
-        print(f"source_split: {source_split}")
         return source
