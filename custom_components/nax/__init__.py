@@ -27,20 +27,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
     )
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
+
+    def on_zones_data_update(path: str, data: any) -> None:
+        asyncio.get_event_loop().create_task(
+            hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        )
+        api.unsubscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
+
+    api.subscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
 
     async def on_hass_stop(event):
         await hass.async_add_executor_job(api.logout)
 
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
+
     async def on_hass_started(event):
         await api.start_websocket()
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
-
-    # connected, connect_message = await hass.add_job(api.login)
     connected, connect_message = await hass.async_add_executor_job(api.login)
     if connected:
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_hass_started)
         return True
     _LOGGER.error(f"Could not connect to NAX: {connect_message}")
