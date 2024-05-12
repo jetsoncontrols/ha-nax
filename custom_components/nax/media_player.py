@@ -2,7 +2,6 @@
 
 import threading
 from typing import Any
-import logging
 import numpy
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME
@@ -10,19 +9,15 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.components.media_player import (
-    BrowseMedia,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
     MediaType,
-    async_process_play_media_url,
 )
 from homeassistant.helpers import device_registry
 from .nax.nax_api import NaxApi
 
 from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -47,7 +42,7 @@ async def async_setup_entry(
     async_add_entities(entities_to_add)
 
 
-# https://developers.home-assistant.io/docs/core/entity/media-player?_highlight=media
+# https://developers.home-assistant.io/docs/core/entity/media-player
 class NaxMediaPlayer(MediaPlayerEntity):
     """Representation of an NAX media player."""
 
@@ -61,11 +56,10 @@ class NaxMediaPlayer(MediaPlayerEntity):
         MediaPlayerEntityFeature.VOLUME_SET
         | MediaPlayerEntityFeature.VOLUME_STEP
         | MediaPlayerEntityFeature.VOLUME_MUTE
-        # | MediaPlayerEntityFeature.BROWSE_MEDIA
         | MediaPlayerEntityFeature.PLAY_MEDIA
-        # | MediaPlayerEntityFeature.TURN_ON
         | MediaPlayerEntityFeature.TURN_OFF
         | MediaPlayerEntityFeature.SELECT_SOURCE
+        | MediaPlayerEntityFeature.SELECT_SOUND_MODE
     )
 
     def __init__(
@@ -74,6 +68,7 @@ class NaxMediaPlayer(MediaPlayerEntity):
         unique_id: str,
         zone_output: str,
     ) -> None:
+        super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
         self.zone_output = zone_output
@@ -82,29 +77,28 @@ class NaxMediaPlayer(MediaPlayerEntity):
 
     def subscribtions(self) -> None:
         self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name", self._generic_update
+        )
+        self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Volume",
-            self._update_volume,
+            self._generic_update,
         )
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.IsMuted",
-            self._update_mute,
+            self._generic_update,
         )
         self.api.subscribe_data_updates(
             f"Device.AvMatrixRouting.Routes.{self.zone_output}",
-            self._update_zone_audio_source,
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.ToneProfile",
+            self._generic_update,
         )
         self.api.subscribe_connection_updates(self._update_connection)
 
     @callback
-    def _update_volume(self, path: str, data: Any) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @callback
-    def _update_mute(self, path: str, data: Any) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @callback
-    def _update_zone_audio_source(self, path: str, data: Any) -> None:
+    def _generic_update(self, path: str, data: Any) -> None:
         self.schedule_update_ha_state(force_refresh=False)
 
     @callback
@@ -129,7 +123,9 @@ class NaxMediaPlayer(MediaPlayerEntity):
 
     @property
     def name(self) -> str:
-        return self.api.get_zone_name(self.zone_output)
+        return (
+            f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)}"
+        )
 
     @property
     def state(self) -> MediaPlayerState | None:
@@ -137,6 +133,13 @@ class NaxMediaPlayer(MediaPlayerEntity):
         if self.api.get_zone_audio_source(self.zone_output) is not None:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.IDLE
+
+    @property
+    def media_content_type(self) -> MediaType | None:
+        """Content type of current playing media."""
+        if self.api.get_zone_audio_source(self.zone_output) is not None:
+            return MediaType.MUSIC
+        return None
 
     @property
     def available(self) -> bool:
@@ -234,13 +237,26 @@ class NaxMediaPlayer(MediaPlayerEntity):
             self.zone_output, self.__demux_source_name(source)
         )
 
+    @property
+    def sound_mode(self) -> str | None:
+        """Return the current sound mode."""
+        return self.api.get_zone_tone_profile(self.zone_output)
+
+    async def async_select_sound_mode(self, sound_mode):
+        """Select sound mode."""
+        await self.api.set_zone_tone_profile(self.zone_output, sound_mode)
+
+    @property
+    def sound_mode_list(self) -> list[str] | None:
+        """List of available sound modes."""
+        return ["Off", "Classical", "Jazz", "Pop", "Rock", "SpokenWord"]
+
     def __mux_source_name(self, input_source: str) -> str:
-        return f"{input_source} ({self.api.get_input_source_name(input_source)})"
+        if not input_source:
+            return ""
+        return f"{self.api.get_input_source_name(input_source)} ({input_source})"
 
     def __demux_source_name(self, source_name: str) -> str:
         if not source_name:
             return ""
-        source_split = source_name.split(" (", 1)
-        # source_name = source_split[1][:-1]
-        source = source_split[0]
-        return source
+        return source_name.split(" (", 1)[1][:-1]

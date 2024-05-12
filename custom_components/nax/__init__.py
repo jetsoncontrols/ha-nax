@@ -17,7 +17,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.MEDIA_PLAYER]
+PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -59,5 +59,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         api = hass.data[DOMAIN].pop(entry.entry_id)
-        await hass.async_add_executor_job(api.logout)
+        await api.logout()
     return unload_ok

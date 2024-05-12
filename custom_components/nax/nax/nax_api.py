@@ -119,11 +119,22 @@ class NaxApi:
 
         while True:
             try:
+                print("Entering Block")
                 receive_buffer += await client.recv()
+                print("Exiting Block")
+                print(f"Received: <{receive_buffer}>")
                 new_message_json = json.loads(receive_buffer)
                 receive_buffer = ""
                 if "Actions" in new_message_json:
-                    continue
+                    for action in new_message_json["Actions"]:
+                        for result in action["Results"]:
+                            if result["StatusInfo"] != "OK":
+                                _LOGGER.error(
+                                    f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"
+                                )
+                    del new_message_json["Actions"]
+                    if not new_message_json:
+                        continue
                 nax_custom_merger.merge(self._json_state, new_message_json)
                 new_message_paths = self._get_json_paths(new_message_json)
                 matching_paths = [
@@ -137,7 +148,10 @@ class NaxApi:
                     )
                     for callback in self._data_subscriptions[path]:
                         callback(path, matching_path_value)
-            except json.JSONDecodeError:  # Not a valid JSON message yet, keep receiving
+            except (
+                json.JSONDecodeError
+            ) as e:  # Not a valid JSON message yet, keep receiving
+                print(f"JSONDecodeError: {e.msg} pos: {e.pos} of {len(e.doc)}")
                 continue
             except websockets.exceptions.ConnectionClosedOK:
                 _LOGGER.warning("Connection closed (OK)")
@@ -234,45 +248,47 @@ class NaxApi:
         return f"wss://{self.ip}/websockify"
 
     def __get_request(self, path: str):
-        if self.get_logged_in():
-            get_request = requests.get(
-                url=self.get_base_url() + path,
-                headers=self.loginResponse.headers,
-                cookies=self.loginResponse.cookies,
-                verify=False,
-                timeout=5,
+        get_request = requests.get(
+            url=self.get_base_url() + path,
+            headers=self.loginResponse.headers,
+            cookies=self.loginResponse.cookies,
+            verify=False,
+            timeout=5,
+        )
+        if get_request.status_code == 200:
+            try:
+                return json.loads(get_request.text)
+            except json.JSONDecodeError:
+                return get_request.text
+        else:
+            print(
+                f"Get request for {get_request.url} failed: {get_request.status_code}"
             )
-            if get_request.status_code == 200:
-                try:
-                    return json.loads(get_request.text)
-                except json.JSONDecodeError:
-                    return get_request.text
-            else:
-                print(
-                    f"Get request for {get_request.url} failed: {get_request.status_code}"
-                )
 
     # def __post_request(self, path: str, json_data: Any | None) -> Any:
-    #     if self.get_logged_in():
-    #         post_request = requests.post(
-    #             url=self.get_base_url() + path,
-    #             headers=self.loginResponse.headers,
-    #             cookies=self.loginResponse.cookies,
-    #             json=json_data,
-    #             verify=False,
-    #             timeout=5,
+    #     post_request = requests.post(
+    #         url=self.get_base_url() + path,
+    #         headers=self.loginResponse.headers,
+    #         cookies=self.loginResponse.cookies,
+    #         json=json_data,
+    #         verify=False,
+    #         timeout=5,
+    #     )
+    #     if post_request.status_code == 200:
+    #         try:
+    #             return json.loads(post_request.text)
+    #         except json.JSONDecodeError:
+    #             return post_request.text
+    #     else:
+    #         print(
+    #             f"Post request for {post_request.url} failed: {post_request.status_code}"
     #         )
-    #         if post_request.status_code == 200:
-    #             try:
-    #                 return json.loads(post_request.text)
-    #             except json.JSONDecodeError:
-    #                 return post_request.text
-    #         else:
-    #             print(
-    #                 f"Post request for {post_request.url} failed: {post_request.status_code}"
-    #             )
 
     def get_device_name(self) -> str | None:
+        if not self.get_logged_in():
+            return self.__get_request(path="/Device/DeviceInfo/Name")["Device"][
+                "DeviceInfo"
+            ]["Name"]
         return self._json_state["Device"]["DeviceInfo"]["Name"]
 
     def get_device_mac_address(self) -> str | None:
@@ -315,6 +331,13 @@ class NaxApi:
                         zone_output
                     ]
                 ):
+                    if (
+                        self._json_state["Device"]["AvMatrixRouting"]["Routes"][
+                            zone_output
+                        ]["AudioSource"]
+                        == ""
+                    ):
+                        return None
                     return self._json_state["Device"]["AvMatrixRouting"]["Routes"][
                         zone_output
                     ]["AudioSource"]
@@ -330,6 +353,58 @@ class NaxApi:
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["IsMuted"]
 
+    def get_zone_signal_detected(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["IsSignalDetected"]
+
+    def get_zone_signal_clipping(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["IsSignalClipping"]
+
+    def get_zone_speaker_clipping(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
+                "IsClippingDetected"
+            ]
+
+    def get_zone_speaker_critical_fault(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
+                "IsCriticalFaultDetected"
+            ]
+
+    def get_zone_speaker_dc_fault(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
+                "IsDcFaultDetected"
+            ]
+
+    def get_zone_speaker_over_current(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
+                "IsOverCurrentConditionDetected"
+            ]
+
+    def get_zone_speaker_over_temperature(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
+                "IsOverTemperatureConditionDetected"
+            ]
+
+    def get_zone_speaker_voltage_fault(self, zone_output: str) -> bool | None:
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
+                "IsVoltageFaultDetected"
+            ]
+
     def get_input_sources(self) -> list[str] | None:
         inputs = self._json_state["Device"]["InputSources"]["Inputs"]
         return [input_source for input_source in inputs.keys()]
@@ -340,6 +415,63 @@ class NaxApi:
         return self._json_state["Device"]["InputSources"]["Inputs"][input_source][
             "Name"
         ]
+
+    def get_input_source_signal_present(self, input_source: str) -> bool | None:
+        if not input_source:
+            return None
+        return self._json_state["Device"]["InputSources"]["Inputs"][input_source][
+            "IsSignalPresent"
+        ]
+
+    def get_input_source_clipping(self, input_source: str) -> bool | None:
+        if not input_source:
+            return None
+        return self._json_state["Device"]["InputSources"]["Inputs"][input_source][
+            "IsClippingDetected"
+        ]
+
+    def get_zone_tone_profile(self, zone_output: str) -> str | None:
+        return self._json_state["Device"]["ZoneOutputs"]["Zones"][zone_output][
+            "ZoneAudio"
+        ]["ToneProfile"]
+
+    # return self.api.get_zone_test_tone(self.zone_output)
+    def get_zone_test_tone(self, zone_output: str) -> bool | None:
+        return self._json_state["Device"]["ZoneOutputs"]["Zones"][zone_output][
+            "ZoneAudio"
+        ]["IsTestToneActive"]
+
+    async def set_zone_test_tone(self, zone_output: str, active: bool) -> None:
+        json_data = {
+            "Device": {
+                "ZoneOutputs": {
+                    "Zones": {
+                        zone_output: {
+                            "ZoneAudio": {
+                                "IsTestToneActive": active,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        await self.ws_client.send(json.dumps(json_data))
+
+    async def set_zone_tone_profile(self, zone_output: str, tone_profile: str) -> None:
+        json_data = {
+            "Device": {
+                "ZoneOutputs": {
+                    "Zones": {
+                        zone_output: {
+                            "ZoneAudio": {
+                                "ToneProfile": tone_profile,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        await self.ws_client.send(json.dumps(json_data))
 
     async def set_zone_volume(self, zone_output: str, volume: float) -> None:
         json_data = {
