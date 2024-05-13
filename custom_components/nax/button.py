@@ -1,11 +1,11 @@
 import threading
 from typing import Any
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.components.switch import SwitchEntity
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers import device_registry
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.components.button import ButtonEntity
+from homeassistant.helpers import device_registry
+from homeassistant.helpers.device_registry import DeviceInfo
 from .nax.nax_api import NaxApi
 from .const import DOMAIN
 
@@ -19,25 +19,27 @@ async def async_setup_entry(
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
 
-    zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
-    for zone in zones:
-        entities_to_add.append(
-            NaxZoneTestToneSwitch(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_test_tone",
-                zone_output=zone,
+    chimes = await hass.async_add_executor_job(api.get_chimes)
+    if chimes:
+        for chime in chimes:
+            entities_to_add.append(
+                NaxChimePlayButton(
+                    api=api,
+                    unique_id=f"{mac_address}_{chime['id']}_play_chime_button",
+                    chime_id=chime["id"],
+                    chime_name=chime["name"],
+                )
             )
-        )
     async_add_entities(entities_to_add)
 
 
-class NaxBaseSwitch(SwitchEntity):
+class NaxBaseButton(ButtonEntity):
 
     api: NaxApi = None
     _entity_id: str = None
 
     def __init__(self, api: NaxApi, unique_id: str) -> None:
-        """Initialize the switch."""
+        """Initialize the button."""
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
@@ -63,7 +65,7 @@ class NaxBaseSwitch(SwitchEntity):
     def entity_id(self) -> str:
         """Provide an entity ID"""
         if self._entity_id is None:
-            self._entity_id = f"switch.{self._attr_unique_id}"
+            self._entity_id = f"button.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter
@@ -105,51 +107,28 @@ class NaxBaseSwitch(SwitchEntity):
         return False
 
 
-class NaxZoneTestToneSwitch(NaxBaseSwitch):
-    """Representation of an NAX zone signal generator switch."""
+class NaxChimePlayButton(NaxBaseButton):
+    """Representation of a Nax chime play button."""
 
-    zone_output: str = None
+    _chime_id: str = None
+    _chime_name: str = None
 
-    def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
-        """Initialize the sensor."""
+    def __init__(self, api: NaxApi, unique_id: str, chime_id: str, chime_name) -> None:
+        """Initialize the chime play button."""
         super().__init__(api, unique_id)
-        self.zone_output = zone_output
-        self._attr_unique_id = unique_id
-
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
-        self.api.subscribe_data_updates(
-            f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.IsTestToneActive",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
-            self._generic_update,
-        )
+        self._attr_unique_id = f"{unique_id}"
+        self._chime_id = chime_id
+        self._chime_name = chime_name
 
     @property
     def name(self) -> str:
-        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Test Tone"
+        return f"{self.api.get_device_name()} {self._chime_name} Play Chime"
 
     @property
     def icon(self) -> str:
         """Return the icon to use in the frontend, if any."""
-        return "mdi:square-wave"
+        return "mdi:bell-outline"
 
-    async def async_turn_on(self, **kwargs) -> None:
-        """Turn the entity on."""
-        await self.api.set_zone_test_tone(self.zone_output, True)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        """Turn the entity off."""
-        await self.api.set_zone_test_tone(self.zone_output, False)
-
-    @property
-    def is_on(self):
-        """Is the entity on"""
-        return self.api.get_zone_test_tone(self.zone_output)
+    async def async_press(self) -> None:
+        """Play the chime."""
+        await self.api.play_chime(self._chime_id)

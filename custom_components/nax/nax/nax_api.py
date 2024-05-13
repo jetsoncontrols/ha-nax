@@ -430,11 +430,37 @@ class NaxApi:
             "ZoneAudio"
         ]["ToneProfile"]
 
-    # return self.api.get_zone_test_tone(self.zone_output)
     def get_zone_test_tone(self, zone_output: str) -> bool | None:
         return self._json_state["Device"]["ZoneOutputs"]["Zones"][zone_output][
             "ZoneAudio"
         ]["IsTestToneActive"]
+
+    def get_chimes(self) -> list[dict[str, str]] | None:
+        result = []
+        for default_chime in self._json_state["Device"]["DoorChimes"]["DefaultChimes"]:
+            result.append(
+                {
+                    "id": default_chime,
+                    "name": self._json_state["Device"]["DoorChimes"]["DefaultChimes"][
+                        default_chime
+                    ]["Name"],
+                }
+            )
+        return result
+
+    async def play_chime(self, chime_id: str) -> None:
+        json_data = {
+            "Device": {
+                "DoorChimes": {
+                    "DefaultChimes": {
+                        chime_id: {
+                            "Play": True,
+                        }
+                    }
+                }
+            }
+        }
+        await self.ws_client.send(json.dumps(json_data))
 
     async def set_zone_test_tone(self, zone_output: str, active: bool) -> None:
         json_data = {
