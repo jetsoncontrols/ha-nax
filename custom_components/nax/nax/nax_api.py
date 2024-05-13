@@ -115,44 +115,16 @@ class NaxApi:
 
     async def ws_handler(self, client: WebSocketClientProtocol) -> None:
         receive_buffer = ""
+        json_raw_messages = []
         await client.send("/Device/")  # Request all device data
 
         while True:
             try:
-                print("Entering Block")
                 receive_buffer += await client.recv()
-                print("Exiting Block")
-                print(f"Received: <{receive_buffer}>")
-                new_message_json = json.loads(receive_buffer)
-                receive_buffer = ""
-                if "Actions" in new_message_json:
-                    for action in new_message_json["Actions"]:
-                        for result in action["Results"]:
-                            if result["StatusInfo"] != "OK":
-                                _LOGGER.error(
-                                    f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"
-                                )
-                    del new_message_json["Actions"]
-                    if not new_message_json:
-                        continue
-                nax_custom_merger.merge(self._json_state, new_message_json)
-                new_message_paths = self._get_json_paths(new_message_json)
-                matching_paths = [
-                    path
-                    for path in new_message_paths
-                    if path in self._data_subscriptions
-                ]
-                for path in matching_paths:
-                    matching_path_value = self._get_value_by_json_path(
-                        new_message_json, path
-                    )
-                    for callback in self._data_subscriptions[path]:
-                        callback(path, matching_path_value)
-            except (
-                json.JSONDecodeError
-            ) as e:  # Not a valid JSON message yet, keep receiving
-                print(f"JSONDecodeError: {e.msg} pos: {e.pos} of {len(e.doc)}")
-                continue
+                while "\n" in receive_buffer:
+                    json_raw_message, receive_buffer = receive_buffer.split("\n", 1)
+                    if not json_raw_message.isspace():
+                        json_raw_messages.append(json_raw_message)
             except websockets.exceptions.ConnectionClosedOK:
                 _LOGGER.warning("Connection closed (OK)")
                 self._ws_client_connected = False
@@ -165,8 +137,31 @@ class NaxApi:
                 for callback in self._connection_subscriptions:
                     callback(self._ws_client_connected)
                 return
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.exception(e)
+            try:
+                while json_raw_messages:
+                    new_message_json = json.loads(json_raw_messages.pop(0))
+                    self._process_received_json_message(new_message_json)
+            except json.JSONDecodeError as e:
+                _LOGGER.error(e)
+
+    def _process_received_json_message(self, json_message: dict[str, Any]) -> None:
+        if "Actions" in json_message:
+            for action in json_message["Actions"]:
+                for result in action["Results"]:
+                    if result["StatusInfo"] != "OK":
+                        _LOGGER.error(
+                            f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"
+                        )
+            return
+        nax_custom_merger.merge(self._json_state, json_message)
+        new_message_paths = self._get_json_paths(json_message)
+        matching_paths = [
+            path for path in new_message_paths if path in self._data_subscriptions
+        ]
+        for path in matching_paths:
+            matching_path_value = self._get_value_by_json_path(json_message, path)
+            for callback in self._data_subscriptions[path]:
+                callback(path, matching_path_value)
 
     def subscribe_connection_updates(
         self,
