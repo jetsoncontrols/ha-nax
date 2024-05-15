@@ -144,7 +144,7 @@ class NaxMediaPlayer(MediaPlayerEntity):
     @property
     def available(self) -> bool:
         """Could the resource be accessed during the last update call."""
-        return self.api.get_logged_in()
+        return self.api.get_websocket_connected()
 
     @property
     def device_info(self) -> DeviceInfo:

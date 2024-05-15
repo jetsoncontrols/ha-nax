@@ -28,6 +28,13 @@ async def async_setup_entry(
                 zone_output=zone,
             )
         )
+        entities_to_add.append(
+            NaxZoneLoudnessSwitch(
+                api=api,
+                unique_id=f"{mac_address}_{zone}_loudness",
+                zone_output=zone,
+            )
+        )
     async_add_entities(entities_to_add)
 
 
@@ -78,7 +85,7 @@ class NaxBaseSwitch(SwitchEntity):
     @property
     def available(self) -> bool:
         """Could the resource be accessed during the last update call."""
-        return self.api.get_logged_in()
+        return self.api.get_websocket_connected()
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -111,7 +118,6 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
     zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
-        """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_unique_id = unique_id
@@ -153,3 +159,50 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
     def is_on(self):
         """Is the entity on"""
         return self.api.get_zone_test_tone(self.zone_output)
+
+
+class NaxZoneLoudnessSwitch(NaxBaseSwitch):
+    zone_output: str = None
+
+    def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
+        super().__init__(api, unique_id)
+        self.zone_output = zone_output
+        self._attr_unique_id = unique_id
+
+        threading.Timer(1.0, self.subscribtions).start()
+
+    def subscribtions(self) -> None:
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.IsLoudnessEnabled",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.DeviceInfo.Name",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
+            self._generic_update,
+        )
+
+    @property
+    def name(self) -> str:
+        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Loudness"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon to use in the frontend, if any."""
+        return "mdi:bullhorn-variant-outline"
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn the entity on."""
+        await self.api.set_zone_loudness(self.zone_output, True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Turn the entity off."""
+        await self.api.set_zone_loudness(self.zone_output, False)
+
+    @property
+    def is_on(self):
+        """Is the entity on"""
+        return self.api.get_zone_loudness(self.zone_output)

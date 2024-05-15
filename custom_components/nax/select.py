@@ -1,11 +1,11 @@
 import threading
 from typing import Any
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.button import ButtonEntity
-from homeassistant.helpers import device_registry
+from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers import device_registry
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.config_entries import ConfigEntry
 from .nax.nax_api import NaxApi
 from .const import DOMAIN
 
@@ -19,27 +19,23 @@ async def async_setup_entry(
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
 
-    chimes = await hass.async_add_executor_job(api.get_chimes)
-    if chimes:
-        for chime in chimes:
-            entities_to_add.append(
-                NaxChimePlayButton(
-                    api=api,
-                    unique_id=f"{mac_address}_{chime['id']}_play_chime_button",
-                    chime_id=chime["id"],
-                    chime_name=chime["name"],
-                )
+    zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
+    for zone in zones:
+        entities_to_add.append(
+            NaxZoneNightModeSelect(
+                api=api,
+                unique_id=f"{mac_address}_{zone}_night_mode",
+                zone_output=zone,
             )
+        )
     async_add_entities(entities_to_add)
 
 
-class NaxBaseButton(ButtonEntity):
-
+class NaxBaseSelect(SelectEntity):
     api: NaxApi = None
     _entity_id: str = None
 
     def __init__(self, api: NaxApi, unique_id: str) -> None:
-        """Initialize the button."""
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
@@ -58,14 +54,14 @@ class NaxBaseButton(ButtonEntity):
 
     @property
     def unique_id(self) -> str:
-        """Set unique device_id"""
+        """Return the unique ID of the switch."""
         return self._attr_unique_id
 
     @property
     def entity_id(self) -> str:
         """Provide an entity ID"""
         if self._entity_id is None:
-            self._entity_id = f"button.{self._attr_unique_id}"
+            self._entity_id = f"sensor.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter
@@ -107,28 +103,49 @@ class NaxBaseButton(ButtonEntity):
         return False
 
 
-class NaxChimePlayButton(NaxBaseButton):
-    """Representation of a Nax chime play button."""
+class NaxZoneNightModeSelect(NaxBaseSelect):
+    zone_output: int = None
 
-    _chime_id: str = None
-    _chime_name: str = None
-
-    def __init__(self, api: NaxApi, unique_id: str, chime_id: str, chime_name) -> None:
-        """Initialize the chime play button."""
+    def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
+        """Initialize the select."""
         super().__init__(api, unique_id)
-        self._attr_unique_id = f"{unique_id}"
-        self._chime_id = chime_id
-        self._chime_name = chime_name
+        self.zone_output = zone_output
+        threading.Timer(1.0, self.subscribtions).start()
+
+    def subscribtions(self) -> None:
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.NightMode",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.DeviceInfo.Name",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
+            self._generic_update,
+        )
 
     @property
     def name(self) -> str:
-        return f"{self.api.get_device_name()} {self._chime_name} Play Chime"
+        """Return the name of the select."""
+        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Night Mode"
 
     @property
     def icon(self) -> str:
         """Return the icon to use in the frontend, if any."""
-        return "mdi:bell-outline"
+        return "mdi:weather-night"
 
-    async def async_press(self) -> None:
-        """Play the chime."""
-        await self.api.play_chime(self._chime_id)
+    @property
+    def current_option(self) -> str:
+        """Return the current option."""
+        return self.api.get_zone_night_mode(self.zone_output)
+
+    @property
+    def options(self) -> list[str]:
+        """Return the list of available options."""
+        return self.api.get_zone_night_modes()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        await self.api.set_zone_night_mode(zone_output=self.zone_output, mode=option)

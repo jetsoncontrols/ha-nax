@@ -143,7 +143,7 @@ class NaxBaseSensor(SensorEntity):
     @property
     def available(self) -> bool:
         """Could the resource be accessed during the last update call."""
-        return self.api.get_logged_in()
+        return self.api.get_websocket_connected()
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -179,8 +179,6 @@ class NaxSourceSignalSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.input_id = input_id
-        self._attr_unique_id = unique_id
-
         threading.Timer(1.0, self.subscribtions).start()
 
     def subscribtions(self) -> None:

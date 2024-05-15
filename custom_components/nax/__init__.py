@@ -17,7 +17,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SENSOR, Platform.SWITCH, Platform.BUTTON]
+PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SENSOR, Platform.SWITCH, Platform.BUTTON, Platform.SELECT]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -44,9 +44,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
 
     async def on_hass_started(event):
-        await api.start_websocket()
+        await api.async_upgrade_websocket()
 
-    connected, connect_message = await hass.async_add_executor_job(api.login)
+    connected, connect_message = await hass.async_add_executor_job(api.http_login)
     if connected:
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_hass_started)
         return True
