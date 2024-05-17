@@ -35,14 +35,12 @@ async def async_setup_entry(
 
 class NaxBaseButton(ButtonEntity):
 
-    api: NaxApi = None
-    _entity_id: str = None
-
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the button."""
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
+        self._entity_id = f"button.{self._attr_unique_id}"
         threading.Timer(1.1, self.base_subscribtions).start()
 
     def base_subscribtions(self) -> None:
@@ -64,8 +62,6 @@ class NaxBaseButton(ButtonEntity):
     @property
     def entity_id(self) -> str:
         """Provide an entity ID"""
-        if self._entity_id is None:
-            self._entity_id = f"button.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter
@@ -109,9 +105,6 @@ class NaxBaseButton(ButtonEntity):
 
 class NaxChimePlayButton(NaxBaseButton):
     """Representation of a Nax chime play button."""
-
-    _chime_id: str = None
-    _chime_name: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, chime_id: str, chime_name) -> None:
         """Initialize the chime play button."""

@@ -50,66 +50,66 @@ async def async_setup_entry(
                 zone_output=zone,
             )
         )
-        entities_to_add.append(
-            NaxZoneSpeakerClippingSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_speaker_clipping",
-                zone_output=zone,
+        if api.get_zone_amplification_supported(zone):
+            entities_to_add.append(
+                NaxZoneSpeakerClippingSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_speaker_clipping",
+                    zone_output=zone,
+                )
             )
-        )
-        entities_to_add.append(
-            NaxZoneCriticalFaultSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_critical_fault",
-                zone_output=zone,
+            entities_to_add.append(
+                NaxZoneCriticalFaultSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_critical_fault",
+                    zone_output=zone,
+                )
             )
-        )
-        entities_to_add.append(
-            NaxZoneDCFaultSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_dc_fault",
-                zone_output=zone,
+            entities_to_add.append(
+                NaxZoneDCFaultSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_dc_fault",
+                    zone_output=zone,
+                )
             )
-        )
-        entities_to_add.append(
-            NaxZoneOverCurrentSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_over_current",
-                zone_output=zone,
+            entities_to_add.append(
+                NaxZoneOverCurrentSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_over_current",
+                    zone_output=zone,
+                )
             )
-        )
-        entities_to_add.append(
-            NaxZoneOverTemperatureSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_over_temperature",
-                zone_output=zone,
+            entities_to_add.append(
+                NaxZoneOverTemperatureSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_over_temperature",
+                    zone_output=zone,
+                )
             )
-        )
-        entities_to_add.append(
-            NaxZoneVoltageFaultSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_voltage_fault",
-                zone_output=zone,
+            entities_to_add.append(
+                NaxZoneVoltageFaultSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_voltage_fault",
+                    zone_output=zone,
+                )
             )
-        )
 
     async_add_entities(entities_to_add)
 
 
 class NaxBaseSensor(SensorEntity):
 
-    api: NaxApi = None
-    _entity_id: str = None
-
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the sensor."""
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
+        self._entity_id = f"sensor.{self._attr_unique_id}"
         threading.Timer(1.1, self.base_subscribtions).start()
 
     def base_subscribtions(self) -> None:
         self.api.subscribe_connection_updates(self._update_connection)
+
 
     @callback
     def _generic_update(self, path: str, data: Any) -> None:
@@ -127,8 +127,6 @@ class NaxBaseSensor(SensorEntity):
     @property
     def entity_id(self) -> str:
         """Provide an entity ID"""
-        if self._entity_id is None:
-            self._entity_id = f"sensor.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter
@@ -173,8 +171,6 @@ class NaxBaseSensor(SensorEntity):
 class NaxSourceSignalSensor(NaxBaseSensor):
     """Representation of an NAX source signal sensor."""
 
-    input_id: str = None
-
     def __init__(self, api: NaxApi, unique_id: str, input_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(api, unique_id)
@@ -212,8 +208,6 @@ class NaxSourceSignalSensor(NaxBaseSensor):
 
 class NaxSourceClippingSensor(NaxBaseSensor):
     """Representation of an NAX source clipping sensor."""
-
-    input_id: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, input_id: str) -> None:
         """Initialize the sensor."""
@@ -254,8 +248,6 @@ class NaxSourceClippingSensor(NaxBaseSensor):
 class NaxZoneSignalSensor(NaxBaseSensor):
     """Representation of an NAX zone signal sensor."""
 
-    zone_output: str = None
-
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
         super().__init__(api, unique_id)
@@ -294,8 +286,6 @@ class NaxZoneSignalSensor(NaxBaseSensor):
 
 class NaxZoneSignalClippingSensor(NaxBaseSensor):
     """Representation of an NAX zone signal clipping sensor."""
-
-    zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
@@ -336,8 +326,6 @@ class NaxZoneSignalClippingSensor(NaxBaseSensor):
 class NaxZoneSpeakerClippingSensor(NaxBaseSensor):
     """Representation of an NAX zone speaker clipping sensor."""
 
-    zone_output: str = None
-
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
         super().__init__(api, unique_id)
@@ -376,8 +364,6 @@ class NaxZoneSpeakerClippingSensor(NaxBaseSensor):
 
 class NaxZoneCriticalFaultSensor(NaxBaseSensor):
     """Representation of an NAX zone critical fault sensor."""
-
-    zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
@@ -418,8 +404,6 @@ class NaxZoneCriticalFaultSensor(NaxBaseSensor):
 class NaxZoneDCFaultSensor(NaxBaseSensor):
     """Representation of an NAX zone DC fault sensor."""
 
-    zone_output: str = None
-
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
         super().__init__(api, unique_id)
@@ -458,8 +442,6 @@ class NaxZoneDCFaultSensor(NaxBaseSensor):
 
 class NaxZoneOverCurrentSensor(NaxBaseSensor):
     """Representation of an NAX zone over current sensor."""
-
-    zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
@@ -500,8 +482,6 @@ class NaxZoneOverCurrentSensor(NaxBaseSensor):
 class NaxZoneOverTemperatureSensor(NaxBaseSensor):
     """Representation of an NAX zone over temperature sensor."""
 
-    zone_output: str = None
-
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""
         super().__init__(api, unique_id)
@@ -540,8 +520,6 @@ class NaxZoneOverTemperatureSensor(NaxBaseSensor):
 
 class NaxZoneVoltageFaultSensor(NaxBaseSensor):
     """Representation of an NAX zone voltage fault sensor."""
-
-    zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the sensor."""

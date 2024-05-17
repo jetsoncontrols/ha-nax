@@ -1,3 +1,4 @@
+import threading
 import logging
 from websockets import WebSocketClientProtocol
 import websockets
@@ -16,17 +17,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class NaxApi:
-    _ip: str = None
-    _username: str = None
-    _password: str = None
-    _loginResponse: requests.Response = None
-    _ws_task: asyncio.Task = None
-    _ws_client: WebSocketClientProtocol = None
-
-    _ws_client_connected: bool = False
-    _json_state: dict[str, Any] = {}
-    _data_subscriptions: dict[str, list[Callable[[str, Any], None]]] = {}
-    _connection_subscriptions: list[list[Callable[[bool], None]]] = []
 
     def __init__(self, ip: str, username: str, password: str) -> None:
         """Initializes the NaxApi class."""
@@ -34,6 +24,12 @@ class NaxApi:
         self._ip = ip
         self._username = username
         self._password = password
+        self._ws_client_connected: bool = False
+        self._json_state: dict[str, Any] = {}
+        self._data_subscriptions: dict[str, list[Callable[[str, Any], None]]] = {}
+        self._subscribe_data_lock = threading.RLock()
+        self._connection_subscriptions: list[list[Callable[[bool], None]]] = []
+        self._subscribe_connection_lock = threading.RLock()
 
     def get_websocket_connected(self) -> bool:
         """Returns True if logged in, False if not."""
@@ -96,14 +92,20 @@ class NaxApi:
             self._ws_task.cancel()
             self._ws_task = None
         if self._ws_client is not None:
-            self._ws_client.close()
-            self._ws_client = None
+            loop = asyncio.new_event_loop()
+            def close_ws_client():
+                asyncio.set_event_loop(loop)
+                future = asyncio.run_coroutine_threadsafe(self._ws_client.close(), loop)
+                future.result()
+                self._ws_client = None
+                loop.close()
+            threading.Thread(target=close_ws_client).start()
 
     def __get_request(self, path: str):
         get_request = requests.get(
             url=self.get_base_url() + path,
-            headers=self.loginResponse.headers,
-            cookies=self.loginResponse.cookies,
+            headers=self._loginResponse.headers,
+            cookies=self._loginResponse.cookies,
             verify=False,
             timeout=5,
         )
@@ -176,38 +178,44 @@ class NaxApi:
         except websockets.exceptions.InvalidStatusCode as isc:
             _LOGGER.exception(isc)
         if self._ws_client is not None:
-            self._ws_task = asyncio.create_task(self.__ws_handler(self._ws_client))
+            self._ws_task = asyncio.run_coroutine_threadsafe(
+                self.__ws_handler(self._ws_client), asyncio.get_event_loop()
+            )
+            # self._ws_task = asyncio.create_task(self.__ws_handler(self._ws_client))
 
     async def __ws_handler(self, client: WebSocketClientProtocol) -> None:
-        receive_buffer = ""
-        json_raw_messages = []
-        await client.send("/Device/")  # Request all device data
+        try:
+            receive_buffer = ""
+            json_raw_messages = []
+            await client.send("/Device/")  # Request all device data
 
-        while True:
-            try:
-                receive_buffer += await client.recv()
-                while "\n" in receive_buffer:
-                    json_raw_message, receive_buffer = receive_buffer.split("\n", 1)
-                    if not json_raw_message.isspace():
-                        json_raw_messages.append(json_raw_message)
-            except websockets.exceptions.ConnectionClosedOK:
-                _LOGGER.warning("Connection closed (OK)")
-                self._ws_client_connected = False
-                for callback in self._connection_subscriptions:
-                    callback(self._ws_client_connected)
-                return
-            except websockets.exceptions.ConnectionClosedError:
-                _LOGGER.warning("Connection closed (Error)")
-                self._ws_client_connected = False
-                for callback in self._connection_subscriptions:
-                    callback(self._ws_client_connected)
-                return
-            try:
-                while json_raw_messages:
-                    new_message_json = json.loads(json_raw_messages.pop(0))
-                    self.__process_received_json_message(new_message_json)
-            except json.JSONDecodeError as e:
-                _LOGGER.error(e)
+            while self._ws_task is not None and not self._ws_task.done():
+                try:
+                    receive_buffer += await client.recv()
+                    while "\n" in receive_buffer:
+                        json_raw_message, receive_buffer = receive_buffer.split("\n", 1)
+                        if not json_raw_message.isspace():
+                            json_raw_messages.append(json_raw_message)
+                except (
+                    websockets.exceptions.ConnectionClosedOK,
+                    websockets.exceptions.ConnectionClosedError,
+                ):
+                    if self._ws_task.done():
+                        # this means the task was canceled
+                        return
+                    _LOGGER.warning("Connection closed (OK)")
+                    self._ws_client_connected = False
+                    for callback in self._connection_subscriptions:
+                        callback(self._ws_client_connected)
+                    return
+                try:
+                    while json_raw_messages:
+                        new_message_json = json.loads(json_raw_messages.pop(0))
+                        self.__process_received_json_message(new_message_json)
+                except json.JSONDecodeError as e:
+                    _LOGGER.error(e)
+        except (asyncio.CancelledError, RuntimeError):
+            _LOGGER.info("Websocket task cancelled")
 
     def __process_received_json_message(self, json_message: dict[str, Any]) -> None:
         if "Actions" in json_message:
@@ -233,12 +241,16 @@ class NaxApi:
         callback: Callable[[bool], None],
         trigger_current_value: bool = True,
     ) -> None:
+        self._subscribe_connection_lock.acquire()
         self._connection_subscriptions.append(callback)
         if trigger_current_value:
             callback(self.get_websocket_connected())
+        self._subscribe_connection_lock.release()
 
     def unsubscribe_connection_updates(self, callback: Callable[[bool], None]) -> None:
+        self._subscribe_connection_lock.acquire()
         self._connection_subscriptions.remove(callback)
+        self._subscribe_connection_lock.release()
 
     def subscribe_data_updates(
         self,
@@ -246,17 +258,21 @@ class NaxApi:
         callback: Callable[[str, Any], None],
         trigger_current_value: bool = True,
     ) -> None:
+        self._subscribe_data_lock.acquire()
         if path not in self._data_subscriptions:
             self._data_subscriptions[path] = []
         self._data_subscriptions[path].append(callback)
-        if trigger_current_value and self._json_state:
+        if trigger_current_value and path in self.__get_json_paths(self._json_state):
             matching_path_value = self.__get_value_by_json_path(self._json_state, path)
             if matching_path_value is not None:
                 callback(path, matching_path_value)
+        self._subscribe_data_lock.release()
 
     def unsubscribe_data_updates(self, path: str, callback: Callable[[str, Any], None]):
+        self._subscribe_data_lock.acquire()
         if path in self._data_subscriptions:
             self._data_subscriptions[path].remove(callback)
+        self._subscribe_data_lock.release()
 
     def __get_json_paths(self, json_obj, current_path="", paths=None) -> list[str]:
         if paths is None:
@@ -466,6 +482,11 @@ class NaxApi:
     def get_zone_loudness(self, zone_output: str) -> bool | None:
         return self.__get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsLoudnessEnabled"
+        )
+
+    def get_zone_amplification_supported(self, zone_output: str) -> bool | None:
+        return self.__get_data(
+            f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
         )
 
     async def set_zone_loudness(self, zone_output: str, active: bool) -> None:

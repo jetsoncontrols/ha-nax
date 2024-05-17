@@ -46,10 +46,6 @@ async def async_setup_entry(
 class NaxMediaPlayer(MediaPlayerEntity):
     """Representation of an NAX media player."""
 
-    api: NaxApi = None
-    zone_output: str = None
-    _entity_id: str = None
-
     _attr_device_class = "speaker"
     _attr_should_poll = False
     _attr_supported_features = (
@@ -71,6 +67,7 @@ class NaxMediaPlayer(MediaPlayerEntity):
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
+        self._entity_id = f"media_player.{self._attr_unique_id}"
         self.zone_output = zone_output
 
         threading.Timer(1.0, self.subscribtions).start()
@@ -95,7 +92,13 @@ class NaxMediaPlayer(MediaPlayerEntity):
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.ToneProfile",
             self._generic_update,
         )
+        input_sources = self.api.get_input_sources()
+        for input_source in input_sources:
+            self.api.subscribe_data_updates(
+                f"Device.InputSources.Inputs.{input_source}.Name", self._generic_update
+            )
         self.api.subscribe_connection_updates(self._update_connection)
+
 
     @callback
     def _generic_update(self, path: str, data: Any) -> None:
@@ -113,8 +116,6 @@ class NaxMediaPlayer(MediaPlayerEntity):
     @property
     def entity_id(self) -> str:
         """Provide an entity ID"""
-        if self._entity_id is None:
-            self._entity_id = f"media_player.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter

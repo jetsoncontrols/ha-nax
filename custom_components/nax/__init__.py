@@ -3,7 +3,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.const import (
     Platform,
     EVENT_HOMEASSISTANT_STOP,
-    EVENT_HOMEASSISTANT_STARTED,
 )
 from homeassistant.config_entries import ConfigEntry
 from .nax.nax_api import NaxApi
@@ -17,11 +16,19 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.MEDIA_PLAYER, Platform.SENSOR, Platform.SWITCH, Platform.BUTTON, Platform.SELECT]
+PLATFORMS = [
+    Platform.MEDIA_PLAYER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.BUTTON,
+    Platform.SELECT,
+]
 
 
+# https://github.com/home-assistant/example-custom-config/blob/master/custom_components/detailed_hello_world_push
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Load a config entry."""
+    _LOGGER.warning(f"Setting up NAX entry: {entry.entry_id}")
     api = NaxApi(
         ip=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
@@ -36,19 +43,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         api.unsubscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
 
-    api.subscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
+    api.subscribe_data_updates(
+        "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=True
+    )
 
-    async def on_hass_stop(event):
-        await hass.async_add_executor_job(api.logout)
+    # async def on_hass_stop(event):
+    #     await hass.async_add_executor_job(api.logout)
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
-
-    async def on_hass_started(event):
-        await api.async_upgrade_websocket()
+    # hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
 
     connected, connect_message = await hass.async_add_executor_job(api.http_login)
     if connected:
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_hass_started)
+        await api.async_upgrade_websocket()
         return True
     _LOGGER.error(f"Could not connect to NAX: {connect_message}")
     return False
@@ -56,8 +62,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload an config entry."""
+    _LOGGER.warning(f"Unloading NAX entry: {entry.entry_id}")
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         api = hass.data[DOMAIN].pop(entry.entry_id)
-        await api.logout()
+        await hass.async_add_executor_job(api.logout)
     return unload_ok

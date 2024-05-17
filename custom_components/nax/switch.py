@@ -15,10 +15,11 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
+
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
 
+    entities_to_add = []
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
     for zone in zones:
         entities_to_add.append(
@@ -40,14 +41,12 @@ async def async_setup_entry(
 
 class NaxBaseSwitch(SwitchEntity):
 
-    api: NaxApi = None
-    _entity_id: str = None
-
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the switch."""
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
+        self._entity_id =  f"switch.{self._attr_unique_id}"
         threading.Timer(1.1, self.base_subscribtions).start()
 
     def base_subscribtions(self) -> None:
@@ -69,8 +68,6 @@ class NaxBaseSwitch(SwitchEntity):
     @property
     def entity_id(self) -> str:
         """Provide an entity ID"""
-        if self._entity_id is None:
-            self._entity_id = f"switch.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter
@@ -114,8 +111,6 @@ class NaxBaseSwitch(SwitchEntity):
 
 class NaxZoneTestToneSwitch(NaxBaseSwitch):
     """Representation of an NAX zone signal generator switch."""
-
-    zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         super().__init__(api, unique_id)
@@ -162,7 +157,6 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
 
 
 class NaxZoneLoudnessSwitch(NaxBaseSwitch):
-    zone_output: str = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         super().__init__(api, unique_id)

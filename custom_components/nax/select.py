@@ -32,13 +32,12 @@ async def async_setup_entry(
 
 
 class NaxBaseSelect(SelectEntity):
-    api: NaxApi = None
-    _entity_id: str = None
 
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
+        self._entity_id = f"select.{self._attr_unique_id}"
         threading.Timer(1.1, self.base_subscribtions).start()
 
     def base_subscribtions(self) -> None:
@@ -60,8 +59,6 @@ class NaxBaseSelect(SelectEntity):
     @property
     def entity_id(self) -> str:
         """Provide an entity ID"""
-        if self._entity_id is None:
-            self._entity_id = f"sensor.{self._attr_unique_id}"
         return self._entity_id
 
     @entity_id.setter
@@ -104,7 +101,6 @@ class NaxBaseSelect(SelectEntity):
 
 
 class NaxZoneNightModeSelect(NaxBaseSelect):
-    zone_output: int = None
 
     def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
         """Initialize the select."""
