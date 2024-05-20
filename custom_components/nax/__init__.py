@@ -28,11 +28,11 @@ PLATFORMS = [
 # https://github.com/home-assistant/example-custom-config/blob/master/custom_components/detailed_hello_world_push
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Load a config entry."""
-    _LOGGER.warning(f"Setting up NAX entry: {entry.entry_id}")
     api = NaxApi(
         ip=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
+        http_fallback=False
     )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
@@ -47,11 +47,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=True
     )
 
-    # async def on_hass_stop(event):
-    #     await hass.async_add_executor_job(api.logout)
-
-    # hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, on_hass_stop)
-
     connected, connect_message = await hass.async_add_executor_job(api.http_login)
     if connected:
         await api.async_upgrade_websocket()
@@ -62,7 +57,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload an config entry."""
-    _LOGGER.warning(f"Unloading NAX entry: {entry.entry_id}")
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         api = hass.data[DOMAIN].pop(entry.entry_id)

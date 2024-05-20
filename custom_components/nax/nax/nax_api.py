@@ -18,13 +18,20 @@ _LOGGER = logging.getLogger(__name__)
 
 class NaxApi:
 
-    def __init__(self, ip: str, username: str, password: str) -> None:
+    def __init__(
+        self, ip: str, username: str, password: str, http_fallback: bool = False
+    ) -> None:
         """Initializes the NaxApi class."""
         requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for self signed certificates
         self._ip = ip
         self._username = username
         self._password = password
+        self._http_fallback = http_fallback
+
+        self._ws_client: WebSocketClientProtocol | None = None
         self._ws_client_connected: bool = False
+        self._ws_task: asyncio.Task | None = None
+        self._loginResponse: requests.Response | None = None
         self._json_state: dict[str, Any] = {}
         self._data_subscriptions: dict[str, list[Callable[[str, Any], None]]] = {}
         self._subscribe_data_lock = threading.RLock()
@@ -56,7 +63,7 @@ class NaxApi:
             userLoginGetResponse = requests.get(
                 url=self.__get_login_url(), verify=False, timeout=5
             )
-        except (ConnectTimeout, MaxRetryError) as e:
+        except (ConnectTimeout, MaxRetryError, ConnectionRefusedError) as e:
             return False, f"Could not connect: {e.reason}"
         self._loginResponse = requests.post(
             url=self.__get_login_url(),
@@ -93,13 +100,19 @@ class NaxApi:
             self._ws_task = None
         if self._ws_client is not None:
             loop = asyncio.new_event_loop()
+
             def close_ws_client():
                 asyncio.set_event_loop(loop)
                 future = asyncio.run_coroutine_threadsafe(self._ws_client.close(), loop)
                 future.result()
                 self._ws_client = None
                 loop.close()
+
             threading.Thread(target=close_ws_client).start()
+
+    def _reconnect(self) -> None:
+        self.http_login()
+        asyncio.new_event_loop().run_until_complete(self.async_upgrade_websocket())
 
     def __get_request(self, path: str):
         get_request = requests.get(
@@ -159,6 +172,7 @@ class NaxApi:
             client: WebSocketClientProtocol = await websockets.connect(
                 self.__get_websocket_url(),
                 ssl=ssl_context,
+                ping_interval=1.0,
                 extra_headers=headers,
                 extensions=[
                     permessage_deflate.ClientPerMessageDeflateFactory(
@@ -200,20 +214,18 @@ class NaxApi:
                     websockets.exceptions.ConnectionClosedOK,
                     websockets.exceptions.ConnectionClosedError,
                 ):
-                    if self._ws_task.done():
-                        # this means the task was canceled
-                        return
-                    _LOGGER.warning("Connection closed (OK)")
+                    _LOGGER.warning("Websocket Connection closed")
                     self._ws_client_connected = False
                     for callback in self._connection_subscriptions:
                         callback(self._ws_client_connected)
+                    threading.Timer(1, self._reconnect).start()
                     return
                 try:
                     while json_raw_messages:
                         new_message_json = json.loads(json_raw_messages.pop(0))
                         self.__process_received_json_message(new_message_json)
                 except json.JSONDecodeError as e:
-                    _LOGGER.error(e)
+                    _LOGGER.error(f"Error decoding JSON: {e}")
         except (asyncio.CancelledError, RuntimeError):
             _LOGGER.info("Websocket task cancelled")
 
@@ -298,20 +310,17 @@ class NaxApi:
     def __get_data(
         self, data_path: str
     ) -> dict[str, Any] | str | bool | int | float | None:
-        get_data = None
-
         if self.get_websocket_connected():
-            get_data = self.__get_value_by_json_path(self._json_state, data_path)
-        else:
-            # check login?
-            get_data = self.__get_request(path=f"/{data_path.replace('.', '/')}")
-        return self.__get_value_by_json_path(get_data, data_path)
+            return self.__get_value_by_json_path(self._json_state, data_path)
+        elif self._http_fallback:
+            return self.__get_value_by_json_path(
+                self.__get_request(path=f"/{data_path.replace('.', '/')}"), data_path
+            )
 
     async def __put_data(self, data_path: str, json_data: Any) -> None:
         if self.get_websocket_connected():
             await self._ws_client.send(json.dumps(json_data))
-        else:
-            # check login?
+        elif self._http_fallback:
             await self.__post_request(
                 path=f"/{data_path.replace('.', '/')}", json_data=json_data
             )
@@ -422,7 +431,8 @@ class NaxApi:
 
     def get_input_sources(self) -> list[str] | None:
         inputs = self.__get_data("Device.InputSources.Inputs")
-        return [input_source for input_source in inputs.keys()]
+        if inputs:
+            return [input_source for input_source in inputs.keys()]
 
     def get_input_source_name(self, input_source: str) -> str | None:
         if input_source:

@@ -99,7 +99,6 @@ class NaxMediaPlayer(MediaPlayerEntity):
             )
         self.api.subscribe_connection_updates(self._update_connection)
 
-
     @callback
     def _generic_update(self, path: str, data: Any) -> None:
         self.schedule_update_ha_state(force_refresh=False)
@@ -219,7 +218,7 @@ class NaxMediaPlayer(MediaPlayerEntity):
     def source(self) -> str | None:
         """Return the current input source."""
         zone_audio_source = self.api.get_zone_audio_source(self.zone_output)
-        if zone_audio_source is not None:
+        if zone_audio_source:
             return self.__mux_source_name(zone_audio_source)
         return None
 
@@ -228,8 +227,9 @@ class NaxMediaPlayer(MediaPlayerEntity):
         """List of available input sources."""
         result = []
         input_sources = self.api.get_input_sources()
-        for input_source in input_sources:
-            result.append(self.__mux_source_name(input_source))
+        if input_sources:
+            for input_source in input_sources:
+                result.append(self.__mux_source_name(input_source))
         return result
 
     async def async_select_source(self, source: str) -> None:

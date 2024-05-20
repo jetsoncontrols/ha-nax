@@ -38,8 +38,11 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ip=user_input[CONF_HOST],
                     username=user_input[CONF_USERNAME],
                     password=user_input[CONF_PASSWORD],
+                    http_fallback=True
                 )
-                connected, message = await self.hass.async_add_executor_job(api.http_login)
+                connected, message = await self.hass.async_add_executor_job(
+                    api.http_login
+                )
                 if not connected:
                     errors["base"] = message
                 else:
