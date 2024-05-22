@@ -1,13 +1,17 @@
+"""Module-level docstring describing the purpose of the module."""
+
 import threading
 from typing import Any
-from homeassistant.core import HomeAssistant, callback
+
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers import device_registry
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
-from .nax.nax_api import NaxApi
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry  # noqa: ICN001
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
 from .const import DOMAIN
+from .nax.nax_api import NaxApi
 
 
 async def async_setup_entry(

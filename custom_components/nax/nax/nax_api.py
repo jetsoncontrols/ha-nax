@@ -1,27 +1,32 @@
-import threading
-import logging
-from websockets import WebSocketClientProtocol
-import websockets
-from websockets.extensions import permessage_deflate
+"""Websocket API for DM Nax devices."""
+
 import asyncio
+from collections.abc import Callable
+import json
+import logging
+import ssl
+import threading
 from typing import Any
-from collections.abc import Callable, Awaitable
-from urllib3.exceptions import MaxRetryError
+
 import requests
 from requests import ConnectTimeout
-import json
-import ssl
+from urllib3.exceptions import MaxRetryError
+import websockets
+from websockets import WebSocketClientProtocol
+from websockets.extensions import permessage_deflate
+
 from .misc.custom_merger import nax_custom_merger
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class NaxApi:
+    """Class for interacting with the NAX system."""
 
     def __init__(
         self, ip: str, username: str, password: str, http_fallback: bool = False
     ) -> None:
-        """Initializes the NaxApi class."""
+        """Initialize the NaxApi class."""
         requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for self signed certificates
         self._ip = ip
         self._username = username
@@ -39,10 +44,11 @@ class NaxApi:
         self._subscribe_connection_lock = threading.RLock()
 
     def get_websocket_connected(self) -> bool:
-        """Returns True if logged in, False if not."""
+        """Return True if logged in, False if not."""
         return self._ws_client_connected
 
     def get_base_url(self) -> str | None:
+        """Return the base URL of the NAX system."""
         if self._ip is None:
             return None
         return f"https://{self._ip}"
@@ -58,7 +64,7 @@ class NaxApi:
         return f"wss://{self._ip}/websockify"
 
     def http_login(self) -> tuple[bool, str]:
-        """Logs in to the NAX system."""
+        """Log in to the NAX system."""
         try:
             userLoginGetResponse = requests.get(
                 url=self.__get_login_url(), verify=False, timeout=5
@@ -90,7 +96,7 @@ class NaxApi:
         return True, "Connected successfully"
 
     def logout(self) -> None:
-        """Logs out of the NAX system."""
+        """Log out of the NAX system."""
         self.__get_request(path="/logout")
         self._loginResponse = None
         self._ws_client_connected = False
@@ -110,9 +116,14 @@ class NaxApi:
 
             threading.Thread(target=close_ws_client).start()
 
-    def _reconnect(self) -> None:
-        self.http_login()
-        asyncio.new_event_loop().run_until_complete(self.async_upgrade_websocket())
+    async def _reconnect(self) -> None:
+        connected, connect_message = await self.http_login()
+        if connected:
+            await asyncio.new_event_loop().run_until_complete(
+                self.async_upgrade_websocket()
+            )
+        else:
+            _LOGGER.error(f"Could not connect to NAX: {connect_message}")  # noqa: G004
 
     def __get_request(self, path: str):
         get_request = requests.get(
@@ -128,8 +139,8 @@ class NaxApi:
             except json.JSONDecodeError:
                 return get_request.text
         else:
-            print(
-                f"Get request for {get_request.url} failed: {get_request.status_code}"
+            _LOGGER.error(
+                f"Get request for {get_request.url} failed: {get_request.status_code}"  # noqa: G004
             )
 
     def __post_request(self, path: str, json_data: Any | None) -> Any:
@@ -147,8 +158,8 @@ class NaxApi:
             except json.JSONDecodeError:
                 return post_request.text
         else:
-            print(
-                f"Post request for {post_request.url} failed: {post_request.status_code}"
+            _LOGGER.error(
+                f"Post request for {post_request.url} failed: {post_request.status_code}"  # noqa: G004
             )
 
     async def async_upgrade_websocket(self) -> None:
@@ -161,10 +172,7 @@ class NaxApi:
             "Accept-Encoding": "gzip, deflate, br",
             "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
             "Cookie": "; ".join(
-                [
-                    "%s=%s" % (i, j)
-                    for i, j in self._loginResponse.cookies.get_dict().items()
-                ]
+                [f"{i}={j}" for i, j in self._loginResponse.cookies.get_dict().items()]
             ),
         }
 
@@ -187,15 +195,14 @@ class NaxApi:
             _LOGGER.info("Connected to websocket")
             for callback in self._connection_subscriptions:
                 callback(self._ws_client_connected)
-        except ssl.SSLCertVerificationError as sslcve:
-            _LOGGER.exception(sslcve)
-        except websockets.exceptions.InvalidStatusCode as isc:
-            _LOGGER.exception(isc)
+        except ssl.SSLCertVerificationError:
+            _LOGGER.exception("An SSL certificate verification error occurred")
+        except websockets.exceptions.InvalidStatusCode:
+            _LOGGER.exception("An invalid status code was received")
         if self._ws_client is not None:
             self._ws_task = asyncio.run_coroutine_threadsafe(
                 self.__ws_handler(self._ws_client), asyncio.get_event_loop()
             )
-            # self._ws_task = asyncio.create_task(self.__ws_handler(self._ws_client))
 
     async def __ws_handler(self, client: WebSocketClientProtocol) -> None:
         try:
@@ -224,10 +231,10 @@ class NaxApi:
                     while json_raw_messages:
                         new_message_json = json.loads(json_raw_messages.pop(0))
                         self.__process_received_json_message(new_message_json)
-                except json.JSONDecodeError as e:
-                    _LOGGER.error(f"Error decoding JSON: {e}")
+                except json.JSONDecodeError:
+                    _LOGGER.error("Error decoding JSON")
         except (asyncio.CancelledError, RuntimeError):
-            _LOGGER.info("Websocket task cancelled")
+            _LOGGER.debug("Websocket task cancelled")
 
     def __process_received_json_message(self, json_message: dict[str, Any]) -> None:
         if "Actions" in json_message:
@@ -235,7 +242,7 @@ class NaxApi:
                 for result in action["Results"]:
                     if result["StatusInfo"] != "OK":
                         _LOGGER.error(
-                            f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"
+                            f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"  # noqa: G004
                         )
             return
         nax_custom_merger.merge(self._json_state, json_message)
@@ -253,15 +260,20 @@ class NaxApi:
         callback: Callable[[bool], None],
         trigger_current_value: bool = True,
     ) -> None:
+        """Subscribe to connection updates.
+
+        Args:
+            callback: A callable that takes a boolean parameter.
+            trigger_current_value: Whether to trigger the callback with the current connection value.
+
+        Returns:
+            None
+
+        """
         self._subscribe_connection_lock.acquire()
         self._connection_subscriptions.append(callback)
         if trigger_current_value:
             callback(self.get_websocket_connected())
-        self._subscribe_connection_lock.release()
-
-    def unsubscribe_connection_updates(self, callback: Callable[[bool], None]) -> None:
-        self._subscribe_connection_lock.acquire()
-        self._connection_subscriptions.remove(callback)
         self._subscribe_connection_lock.release()
 
     def subscribe_data_updates(
@@ -270,6 +282,17 @@ class NaxApi:
         callback: Callable[[str, Any], None],
         trigger_current_value: bool = True,
     ) -> None:
+        """Subscribe to data updates.
+
+        Args:
+            path: The path to subscribe to.
+            callback: A callable that takes a string and any parameter.
+            trigger_current_value: Whether to trigger the callback with the current value.
+
+        Returns:
+            None
+
+        """
         self._subscribe_data_lock.acquire()
         if path not in self._data_subscriptions:
             self._data_subscriptions[path] = []
@@ -281,6 +304,16 @@ class NaxApi:
         self._subscribe_data_lock.release()
 
     def unsubscribe_data_updates(self, path: str, callback: Callable[[str, Any], None]):
+        """Unsubscribe from data updates.
+
+        Args:
+            path: The path to unsubscribe from.
+            callback: A callable that takes a string and any parameter.
+
+        Returns:
+            None
+
+        """
         self._subscribe_data_lock.acquire()
         if path in self._data_subscriptions:
             self._data_subscriptions[path].remove(callback)
@@ -312,10 +345,9 @@ class NaxApi:
     ) -> dict[str, Any] | str | bool | int | float | None:
         if self.get_websocket_connected():
             return self.__get_value_by_json_path(self._json_state, data_path)
-        elif self._http_fallback:
-            return self.__get_value_by_json_path(
-                self.__get_request(path=f"/{data_path.replace('.', '/')}"), data_path
-            )
+        return self.__get_value_by_json_path(
+            self.__get_request(path=f"/{data_path.replace('.', '/')}"), data_path
+        )
 
     async def __put_data(self, data_path: str, json_data: Any) -> None:
         if self.get_websocket_connected():
@@ -326,40 +358,100 @@ class NaxApi:
             )
 
     def get_device_name(self) -> str | None:
+        """Get the name of the device.
+
+        Returns:
+            The name of the device as a string, or None if the name is not available.
+
+        """
         return self.__get_data("Device.DeviceInfo.Name")
 
     def get_device_mac_address(self) -> str | None:
+        """Get the MAC address of the device.
+
+        Returns:
+            The MAC address of the device as a string, or None if the MAC address is not available.
+
+        """
         return self.__get_data("Device.DeviceInfo.MacAddress")
 
     def get_device_manufacturer(self) -> str | None:
+        """Get the manufacturer of the device.
+
+        Returns:
+            The manufacturer of the device as a string, or None if the name is not available.
+
+        """
         return self.__get_data("Device.DeviceInfo.Manufacturer")
 
     def get_device_model(self) -> str | None:
+        """Get the model of the device.
+
+        Returns:
+            The model of the device as a string, or None if the model is not available.
+
+        """
         return self.__get_data("Device.DeviceInfo.Model")
 
     def get_device_firmware_version(self) -> str | None:
+        """Get the firmware version of the device.
+
+        Returns:
+            The firmware version of the device as a string, or None if the version is not available.
+
+        """
         return self.__get_data("Device.DeviceInfo.DeviceVersion")
 
     def get_device_serial_number(self) -> str | None:
+        """Get the serial number of the device.
+
+        Returns:
+            The serial number of the device as a string, or None if the serial number is not available.
+
+        """
         return self.__get_data("Device.DeviceInfo.SerialNumber")
 
     def __get_zone_outputs(self) -> dict[str:Any] | None:
         return self.__get_data("Device.ZoneOutputs.Zones")
 
     def get_all_zone_outputs(self) -> list[str]:
+        """Get a list of all zone outputs.
+
+        Returns:
+            A list of strings representing all zone outputs.
+
+        """
         result = []
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             for zone_output in zone_outputs_json:
-                result.append(zone_output)
+                result.append(zone_output)  # noqa: PERF402
         return result
 
     def get_zone_name(self, zone_output: str) -> str | None:
+        """Get the name of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The name of the specified zone output as a string, or None if the name is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["Name"]
 
     def get_zone_audio_source(self, zone_output: str) -> str | None:
+        """Get the audio source for a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The audio source for the specified zone output as a string, or None if the audio source is not available.
+
+        """
         zone_routes = self.__get_data("Device.AvMatrixRouting.Routes")
         if zone_routes and zone_output in zone_routes:
             if "AudioSource" in zone_routes[zone_output]:
@@ -368,26 +460,71 @@ class NaxApi:
         return None
 
     def get_zone_volume(self, zone_output: str) -> float | None:
+        """Get the volume of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The volume of the specified zone output as a float, or None if the volume is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Volume"]
 
     def get_zone_muted(self, zone_output: str) -> bool | None:
+        """Get the mute status of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The mute status of the specified zone output as a boolean, or None if the mute status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["IsMuted"]
 
     def get_zone_signal_detected(self, zone_output: str) -> bool | None:
+        """Get the signal detection status for a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The signal detection status for the specified zone output as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["IsSignalDetected"]
 
     def get_zone_signal_clipping(self, zone_output: str) -> bool | None:
+        """Get the signal clipping status for a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The signal clipping status for the specified zone output as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["IsSignalClipping"]
 
     def get_zone_speaker_clipping(self, zone_output: str) -> bool | None:
+        """Get the clipping status of a specific zone output's speaker.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The clipping status of the specified zone output's speaker as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
@@ -395,6 +532,15 @@ class NaxApi:
             ]
 
     def get_zone_speaker_critical_fault(self, zone_output: str) -> bool | None:
+        """Get the critical fault status of a specific zone output's speaker.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The critical fault status of the specified zone output's speaker as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
@@ -402,6 +548,15 @@ class NaxApi:
             ]
 
     def get_zone_speaker_dc_fault(self, zone_output: str) -> bool | None:
+        """Get the DC fault status of a specific zone output's speaker.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The DC fault status of the specified zone output's speaker as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
@@ -409,6 +564,15 @@ class NaxApi:
             ]
 
     def get_zone_speaker_over_current(self, zone_output: str) -> bool | None:
+        """Get the over current status of a specific zone output's speaker.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The over current status of the specified zone output's speaker as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
@@ -416,6 +580,15 @@ class NaxApi:
             ]
 
     def get_zone_speaker_over_temperature(self, zone_output: str) -> bool | None:
+        """Get the over temperature status of a specific zone output's speaker.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The over temperature status of the specified zone output's speaker as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
@@ -423,6 +596,15 @@ class NaxApi:
             ]
 
     def get_zone_speaker_voltage_fault(self, zone_output: str) -> bool | None:
+        """Get the voltage fault status of a specific zone output's speaker.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The voltage fault status of the specified zone output's speaker as a boolean, or None if the status is not available.
+
+        """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
@@ -430,45 +612,121 @@ class NaxApi:
             ]
 
     def get_input_sources(self) -> list[str] | None:
+        """Get the list of available input sources.
+
+        Returns:
+            A list of available input sources as strings, or None if no input sources are available.
+
+        """
         inputs = self.__get_data("Device.InputSources.Inputs")
         if inputs:
-            return [input_source for input_source in inputs.keys()]
+            return list(inputs.keys())
 
     def get_input_source_name(self, input_source: str) -> str | None:
+        """Get the name of a specific input source.
+
+        Args:
+            input_source: The input source identifier.
+
+        Returns:
+            The name of the specified input source as a string, or None if the name is not available.
+
+        """
         if input_source:
             return self.__get_data(f"Device.InputSources.Inputs.{input_source}.Name")
 
     def get_input_source_signal_present(self, input_source: str) -> bool | None:
+        """Get the signal present status of a specific input source.
+
+        Args:
+            input_source: The input source identifier.
+
+        Returns:
+            The signal present status of the specified input source as a boolean, or None if the status is not available.
+
+        """
         if input_source:
             return self.__get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsSignalPresent"
             )
 
     def get_input_source_clipping(self, input_source: str) -> bool | None:
+        """Get the clipping status of a specific input source.
+
+        Args:
+            input_source: The input source identifier.
+
+        Returns:
+            The clipping status of the specified input source as a boolean, or None if the status is not available.
+
+        """
         if input_source:
             return self.__get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsClippingDetected"
             )
 
     def get_zone_tone_profile(self, zone_output: str) -> str | None:
+        """Get the tone profile of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The tone profile of the specified zone output as a string, or None if the tone profile is not available.
+
+        """
         return self.__get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.ToneProfile"
         )
 
     def get_zone_test_tone(self, zone_output: str) -> bool | None:
+        """Get the test tone status of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The test tone status of the specified zone output as a boolean, or None if the status is not available.
+
+        """
         return self.__get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsTestToneActive"
         )
 
     def get_zone_night_modes(self) -> list[str] | None:
+        """Get the available night modes for a zone output.
+
+        Returns:
+            A list of available night modes as strings, or None if the night modes are not available.
+
+        """
         return ["Off", "Low", "Medium", "High"]
 
     def get_zone_night_mode(self, zone_output: str) -> str | None:
+        """Get the night mode of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The night mode of the specified zone output as a string, or None if the night mode is not available.
+
+        """
         return self.__get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.NightMode"
         )
 
     async def set_zone_night_mode(self, zone_output: str, mode: str) -> None:
+        """Set the night mode of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            mode: The night mode to set.
+
+        Raises:
+            ValueError: If an invalid night mode is provided.
+
+        """
         if mode not in self.get_zone_night_modes():
             raise ValueError(f"Invalid Night Mode '{mode}'")
         json_data = {
@@ -490,16 +748,41 @@ class NaxApi:
         )
 
     def get_zone_loudness(self, zone_output: str) -> bool | None:
+        """Get the loudness status of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The loudness status of the specified zone output as a boolean, or None if the status is not available.
+
+        """
         return self.__get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsLoudnessEnabled"
         )
 
     def get_zone_amplification_supported(self, zone_output: str) -> bool | None:
+        """Check if amplification is supported for a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            A boolean indicating if amplification is supported for the specified zone output, or None if the information is not available.
+
+        """
         return self.__get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
         )
 
     async def set_zone_loudness(self, zone_output: str, active: bool) -> None:
+        """Set the loudness status of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            active: The loudness status to set.
+
+        """
         json_data = {
             "Device": {
                 "ZoneOutputs": {
@@ -519,13 +802,28 @@ class NaxApi:
         )
 
     def get_chimes(self) -> list[dict[str, str]] | None:
+        """Get the list of available chimes.
+
+        Returns:
+            A list of dictionaries containing the ID and name of each chime, or None if the information is not available.
+
+        """
         result = []
-        chimes = self.__get_data(f"Device.DoorChimes.DefaultChimes")
-        for chime in chimes.keys():
-            result.append({"id": chime, "name": chimes[chime]["Name"]})
+        chimes = self.__get_data("Device.DoorChimes.DefaultChimes")
+        for chime in chimes:
+            result.append({"id": chime, "name": chimes[chime]["Name"]})  # noqa: PERF401
         return result
 
     async def play_chime(self, chime_id: str) -> None:
+        """Play a chime with the specified chime ID.
+
+        Args:
+            chime_id: The ID of the chime to play.
+
+        Returns:
+            None
+
+        """
         json_data = {
             "Device": {
                 "DoorChimes": {
@@ -543,6 +841,16 @@ class NaxApi:
         )
 
     async def set_zone_test_tone(self, zone_output: str, active: bool) -> None:
+        """Set the test tone status of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            active: The test tone status to set.
+
+        Returns:
+            None
+
+        """
         json_data = {
             "Device": {
                 "ZoneOutputs": {
@@ -562,6 +870,16 @@ class NaxApi:
         )
 
     async def set_zone_tone_profile(self, zone_output: str, tone_profile: str) -> None:
+        """Set the tone profile of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            tone_profile: The tone profile to set.
+
+        Returns:
+            None
+
+        """
         json_data = {
             "Device": {
                 "ZoneOutputs": {
@@ -581,6 +899,16 @@ class NaxApi:
         )
 
     async def set_zone_volume(self, zone_output: str, volume: float) -> None:
+        """Set the volume of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            volume: The volume level to set.
+
+        Returns:
+            None
+
+        """
         json_data = {
             "Device": {
                 "ZoneOutputs": {
@@ -600,6 +928,16 @@ class NaxApi:
         )
 
     async def set_zone_mute(self, zone_output: str, mute: bool) -> None:
+        """Set the mute status of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            mute: The mute status to set.
+
+        Returns:
+            None
+
+        """
         json_data = {
             "Device": {
                 "ZoneOutputs": {
@@ -619,6 +957,16 @@ class NaxApi:
         )
 
     async def set_zone_audio_source(self, zone_output: str, route: str) -> None:
+        """Set the audio source of a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+            route: The audio source to set.
+
+        Returns:
+            None
+
+        """
         json_data = {
             "Device": {
                 "AvMatrixRouting": {

@@ -28,11 +28,17 @@ async def async_setup_entry(
                 zone_output=zone,
             )
         )
+        entities_to_add.append(
+            NaxZoneAes67StreamSelect(
+                api=api,
+                unique_id=f"{mac_address}_{zone}_aes67_stream",
+                zone_output=zone,
+            )
+        )
     async_add_entities(entities_to_add)
 
 
 class NaxBaseSelect(SelectEntity):
-
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         super().__init__()
         self.api = api
@@ -101,7 +107,6 @@ class NaxBaseSelect(SelectEntity):
 
 
 class NaxZoneNightModeSelect(NaxBaseSelect):
-
     def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
         """Initialize the select."""
         super().__init__(api, unique_id)
@@ -145,3 +150,47 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
         await self.api.set_zone_night_mode(zone_output=self.zone_output, mode=option)
+
+
+class NaxZoneAes67StreamSelect(NaxBaseSelect):
+    def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
+        """Initialize the select."""
+        super().__init__(api, unique_id)
+        self.zone_output = zone_output
+        threading.Timer(1.0, self.subscribtions).start()
+
+    def subscribtions(self) -> None:
+        self.api.subscribe_data_updates(
+            "Device.DeviceInfo.Name",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
+            self._generic_update,
+        )
+
+    @property
+    def name(self) -> str:
+        """Return the name of the select."""
+        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Aes67 Stream"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon to use in the frontend, if any."""
+        return "mdi:multicast"
+
+    @property
+    def current_option(self) -> str:
+        """Return the current option."""
+        return self.api.get_zone_aes67_stream(self.zone_output)
+
+    @property
+    def options(self) -> list[str]:
+        """Return the list of available options."""
+        return self.api.get_aes67_streams()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected option."""
+        await self.api.set_zone_aes67_stream(
+            zone_output=self.zone_output, stream=option
+        )

@@ -1,28 +1,23 @@
-import logging
-from homeassistant.core import HomeAssistant
-from homeassistant.const import (
-    Platform,
-    EVENT_HOMEASSISTANT_STOP,
-)
-from homeassistant.config_entries import ConfigEntry
-from .nax.nax_api import NaxApi
 import asyncio
+import logging
 
-from .const import (
-    DOMAIN,
-    CONF_HOST,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
+
+from .const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .nax.nax_api import NaxApi
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [
-    Platform.MEDIA_PLAYER,
-    Platform.SENSOR,
-    Platform.SWITCH,
-    Platform.BUTTON,
-    Platform.SELECT,
-]
+PLATFORMS = sorted(
+    [
+        Platform.MEDIA_PLAYER,
+        Platform.SENSOR,
+        Platform.SWITCH,
+        Platform.BUTTON,
+        Platform.SELECT,
+    ]
+)
 
 
 # https://github.com/home-assistant/example-custom-config/blob/master/custom_components/detailed_hello_world_push
@@ -32,7 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ip=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
-        http_fallback=False
+        http_fallback=False,
     )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
@@ -51,7 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if connected:
         await api.async_upgrade_websocket()
         return True
-    _LOGGER.error(f"Could not connect to NAX: {connect_message}")
+    _LOGGER.error(f"Could not connect to NAX: {connect_message}")  # noqa: G004
     return False
 
 
