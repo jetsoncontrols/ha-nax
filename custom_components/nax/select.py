@@ -1,4 +1,4 @@
-import threading
+import socket
 from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.components.select import SelectEntity
@@ -44,9 +44,9 @@ class NaxBaseSelect(SelectEntity):
         self.api = api
         self._attr_unique_id = unique_id
         self._entity_id = f"select.{self._attr_unique_id}"
-        threading.Timer(1.1, self.base_subscribtions).start()
+        self.__base_subscriptions()
 
-    def base_subscribtions(self) -> None:
+    def __base_subscriptions(self) -> None:
         self.api.subscribe_connection_updates(self._update_connection)
 
     @callback
@@ -111,15 +111,15 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
         """Initialize the select."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
-        threading.Timer(1.0, self.subscribtions).start()
+        self.__subscriptions()
 
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.NightMode",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -157,9 +157,9 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         """Initialize the select."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
-        threading.Timer(1.0, self.subscribtions).start()
+        self.__subscriptions()
 
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             "Device.DeviceInfo.Name",
             self._generic_update,
@@ -168,6 +168,18 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
             f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
             self._generic_update,
         )
+        self.api.subscribe_data_updates(
+            f"Device.NaxAudio.NaxRx.NaxRxStreams.{self.api.get_stream_zone_receiver_mapping(zone_output=self.zone_output)}.NetworkAddressStatus",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            "Device.NaxAudio.NaxSdp.NaxSdpStreams",
+            self._nax_sdp_update,
+        )
+
+    @callback
+    def _nax_sdp_update(self, path: str, data: Any) -> None:
+        self.schedule_update_ha_state(force_refresh=False)
 
     @property
     def name(self) -> str:
@@ -180,17 +192,54 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         return "mdi:multicast"
 
     @property
+    def entity_registry_visible_default(self) -> bool:
+        """If the entity should be visible in the dashboard by default."""
+        return True
+
+    @property
     def current_option(self) -> str:
         """Return the current option."""
-        return self.api.get_zone_aes67_stream(self.zone_output)
+        zone_streamer = self.api.get_stream_zone_receiver_mapping(
+            zone_output=self.zone_output
+        )
+        streamer_address = self.api.get_nax_rx_stream_address(streamer=zone_streamer)
+        streams = self.api.get_aes67_streams()
+        streams.append({"name": "None", "address": "0.0.0.0"})
+        matching_stream = None
+        for stream in streams:
+            if stream["address"] == streamer_address:
+                matching_stream = stream
+                break
+        if streamer_address:
+            return self.__mux_stream_name(matching_stream)
 
     @property
     def options(self) -> list[str]:
         """Return the list of available options."""
-        return self.api.get_aes67_streams()
+        streams = self.api.get_aes67_streams()
+        streams.append({"name": "None", "address": "0.0.0.0"})
+        return [
+            self.__mux_stream_name(stream)
+            for stream in sorted(
+                streams, key=lambda item: socket.inet_aton(item["address"])
+            ) if not self.api.get_aes67_address_is_local(stream["address"])
+        ]
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
-        await self.api.set_zone_aes67_stream(
-            zone_output=self.zone_output, stream=option
+        zone_streamer = self.api.get_stream_zone_receiver_mapping(
+            zone_output=self.zone_output
         )
+        await self.api.set_nax_rx_stream(
+            streamer=zone_streamer, address=self.__demux_stream_name(option)
+        )
+
+    def __mux_stream_name(self, stream_arg: dict) -> str:
+        if not stream_arg:
+            return ""
+        return f"{stream_arg["name"]} ({stream_arg["address"]})"
+
+    def __demux_stream_name(self, stream_arg: str) -> dict:
+        if not stream_arg:
+            return ""
+        return stream_arg.split(" (", 1)[1][:-1]

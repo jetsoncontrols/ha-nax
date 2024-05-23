@@ -1,6 +1,5 @@
 """Module-level docstring describing the purpose of the module."""
 
-import threading
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -109,9 +108,9 @@ class NaxBaseSensor(SensorEntity):
         self.api = api
         self._attr_unique_id = unique_id
         self._entity_id = f"sensor.{self._attr_unique_id}"
-        threading.Timer(1.1, self.base_subscribtions).start()
+        self.__base_subscriptions()
 
-    def base_subscribtions(self) -> None:
+    def __base_subscriptions(self) -> None:
         self.api.subscribe_connection_updates(self._update_connection)
 
 
@@ -179,15 +178,15 @@ class NaxSourceSignalSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.input_id = input_id
-        threading.Timer(1.0, self.subscribtions).start()
+        self.__subscriptions()
 
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.InputSources.Inputs.{self.input_id}.IsSignalPresent",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -217,16 +216,15 @@ class NaxSourceClippingSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.input_id = input_id
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.InputSources.Inputs.{self.input_id}.IsClippingDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -256,16 +254,15 @@ class NaxZoneSignalSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.IsSignalDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -295,16 +292,15 @@ class NaxZoneSignalClippingSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.IsSignalClipping",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -334,16 +330,15 @@ class NaxZoneSpeakerClippingSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsClippingDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -373,16 +368,15 @@ class NaxZoneCriticalFaultSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsCriticalFaultDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -412,16 +406,15 @@ class NaxZoneDCFaultSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsDcFaultDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -451,16 +444,15 @@ class NaxZoneOverCurrentSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsOverCurrentConditionDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -490,10 +482,9 @@ class NaxZoneOverTemperatureSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsOverTemperatureConditionDetected",
             self._generic_update,
@@ -529,16 +520,15 @@ class NaxZoneVoltageFaultSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsVoltageFaultDetected",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(

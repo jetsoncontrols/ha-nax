@@ -1,4 +1,3 @@
-import threading
 from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.components.switch import SwitchEntity
@@ -47,9 +46,9 @@ class NaxBaseSwitch(SwitchEntity):
         self.api = api
         self._attr_unique_id = unique_id
         self._entity_id =  f"switch.{self._attr_unique_id}"
-        threading.Timer(1.1, self.base_subscribtions).start()
+        self.__base_subscriptions()
 
-    def base_subscribtions(self) -> None:
+    def __base_subscriptions(self) -> None:
         self.api.subscribe_connection_updates(self._update_connection)
 
     @callback
@@ -116,10 +115,9 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_unique_id = unique_id
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.IsTestToneActive",
             self._generic_update,
@@ -162,10 +160,9 @@ class NaxZoneLoudnessSwitch(NaxBaseSwitch):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_unique_id = unique_id
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.IsLoudnessEnabled",
             self._generic_update,

@@ -1,4 +1,3 @@
-import threading
 from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
@@ -41,9 +40,9 @@ class NaxBaseButton(ButtonEntity):
         self.api = api
         self._attr_unique_id = unique_id
         self._entity_id = f"button.{self._attr_unique_id}"
-        threading.Timer(1.1, self.base_subscribtions).start()
+        self.__base_subscriptions()
 
-    def base_subscribtions(self) -> None:
+    def __base_subscriptions(self) -> None:
         self.api.subscribe_connection_updates(self._update_connection)
 
     @callback

@@ -245,6 +245,7 @@ class NaxApi:
                             f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"  # noqa: G004
                         )
             return
+        # print(json.dumps(json_message, indent=4))
         nax_custom_merger.merge(self._json_state, json_message)
         new_message_paths = self.__get_json_paths(json_message)
         matching_paths = [
@@ -258,7 +259,7 @@ class NaxApi:
     def subscribe_connection_updates(
         self,
         callback: Callable[[bool], None],
-        trigger_current_value: bool = True,
+        trigger_current_value: bool = False,
     ) -> None:
         """Subscribe to connection updates.
 
@@ -280,7 +281,7 @@ class NaxApi:
         self,
         path: str,
         callback: Callable[[str, Any], None],
-        trigger_current_value: bool = True,
+        trigger_current_value: bool = False,
     ) -> None:
         """Subscribe to data updates.
 
@@ -458,6 +459,97 @@ class NaxApi:
                 if zone_routes[zone_output]["AudioSource"] != "":
                     return zone_routes[zone_output]["AudioSource"]
         return None
+
+    def get_aes67_streams(self) -> list[dict[str, str]] | None:
+        """Get the list of available AES67 streams.
+
+        Returns:
+            A list of available AES67 streams as strings, or None if no streams are available.
+
+        """
+        streams = self.__get_data("Device.NaxAudio.NaxSdp.NaxSdpStreams")
+        return [
+            {
+                "address": stream["NetworkAddressStatus"],
+                "name": stream["SessionNameStatus"],
+            }
+            for stream in streams.values() if stream
+        ]
+
+    def get_stream_zone_receiver_mapping(self, zone_output: str) -> str | None:
+        """Get the receiver mapping for a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The receiver mapping for the specified zone output as a string, or None if the mapping is not available.
+
+        """
+        rx_mappings = self.__get_data(
+            "Device.NaxAudio.StreamReferenceMapping.NaxRxStreams"
+        )
+        for streamer in rx_mappings:
+            if rx_mappings[streamer]["Path"] == f"ZoneOutputs/Zones/{zone_output}":
+                return streamer
+
+    def get_aes67_address_is_local(self, address: str) -> bool:
+        """Check if an AES67 address is local.
+
+        Args:
+            address: The AES67 address to check.
+
+        Returns:
+            A boolean indicating if the address is local.
+
+        """
+        tx_streams = self.__get_data("Device.NaxAudio.NaxTx.NaxTxStreams")
+        for stream in tx_streams.values():
+            if stream["NetworkAddressStatus"] == address:
+                return True
+        return False
+
+    def get_nax_rx_stream_address(self, streamer: str) -> str | None:
+        """Get the network address for a specific NaxRx streamer.
+
+        Args:
+            streamer: The NaxRx streamer identifier.
+
+        Returns:
+            The network address for the specified NaxRx streamer as a string, or None if the address is not available.
+
+        """
+        stream = self.__get_data(f"Device.NaxAudio.NaxRx.NaxRxStreams.{streamer}")
+        return stream["NetworkAddressStatus"]
+
+    async def set_nax_rx_stream(self, streamer: str, address: str) -> None:
+        """Set the network address for a specific NaxRx streamer.
+
+        Args:
+            streamer: The NaxRx streamer identifier.
+            address: The network address to set.
+
+        Returns:
+            None
+
+        """
+        json_data = {
+            "Device": {
+                "NaxAudio": {
+                    "NaxRx": {
+                        "NaxRxStreams": {
+                            streamer: {
+                                "NetworkAddressRequested": address,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        await self.__put_data(
+            data_path=f"Device.NaxAudio.NaxRx.NaxRxStreams.{streamer}.NetworkAddressRequested",
+            json_data=json_data,
+        )
 
     def get_zone_volume(self, zone_output: str) -> float | None:
         """Get the volume of a specific zone output.

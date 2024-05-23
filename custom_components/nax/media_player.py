@@ -1,6 +1,5 @@
 """Support for Nax media player."""
 
-import threading
 from typing import Any
 import numpy
 from homeassistant.config_entries import ConfigEntry
@@ -69,10 +68,9 @@ class NaxMediaPlayer(MediaPlayerEntity):
         self._attr_unique_id = unique_id
         self._entity_id = f"media_player.{self._attr_unique_id}"
         self.zone_output = zone_output
+        self.__subscriptions()
 
-        threading.Timer(1.0, self.subscribtions).start()
-
-    def subscribtions(self) -> None:
+    def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.Name", self._generic_update
         )
