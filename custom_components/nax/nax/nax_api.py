@@ -1,6 +1,7 @@
 """Websocket API for DM Nax devices."""
 
 import asyncio
+import time
 from collections.abc import Callable
 import json
 import logging
@@ -116,14 +117,26 @@ class NaxApi:
 
             threading.Thread(target=close_ws_client).start()
 
-    async def _reconnect(self) -> None:
-        connected, connect_message = await self.http_login()
-        if connected:
-            await asyncio.new_event_loop().run_until_complete(
-                self.async_upgrade_websocket()
-            )
-        else:
-            _LOGGER.error(f"Could not connect to NAX: {connect_message}")  # noqa: G004
+    def _reconnect(self) -> None:
+        _LOGGER.error("_reconnect called")
+        def reconnect_coroutine():
+            _LOGGER.error("reconnect_coroutine called")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            connected = False
+            while not connected:
+                _LOGGER.error("reconnect while loop started")
+                http_connected, http_connect_message = loop.run_until_complete(self.http_login())
+                if http_connected:
+                    ws_connected, ws_connect_message = loop.run_until_complete(self.async_upgrade_websocket())
+                    if not ws_connected:
+                        _LOGGER.error(f"Could not reconnect to NAX (WS): {ws_connect_message}")
+                    connected = ws_connected
+                else:
+                    _LOGGER.error(f"Could not reconnect to NAX (HTTP): {http_connect_message}")  # noqa: G004
+                    time.sleep(1)  # wait for 1 second before trying to reconnect
+            loop.close()
+        asyncio.get_event_loop().call_later(1, reconnect_coroutine)
 
     def __get_request(self, path: str):
         get_request = requests.get(
@@ -162,8 +175,9 @@ class NaxApi:
                 f"Post request for {post_request.url} failed: {post_request.status_code}"  # noqa: G004
             )
 
-    async def async_upgrade_websocket(self) -> None:
+    async def async_upgrade_websocket(self) -> tuple[bool, str]:
         """Upgrade previously http_login to websocket."""
+        self._ws_client = None
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
@@ -197,12 +211,15 @@ class NaxApi:
                 callback(self._ws_client_connected)
         except ssl.SSLCertVerificationError:
             _LOGGER.exception("An SSL certificate verification error occurred")
+            return False, "Connection Failed, SSL certificate verification error"
         except websockets.exceptions.InvalidStatusCode:
             _LOGGER.exception("An invalid status code was received")
+            return False, "Connection Failed, Invalid status code"
         if self._ws_client is not None:
             self._ws_task = asyncio.run_coroutine_threadsafe(
                 self.__ws_handler(self._ws_client), asyncio.get_event_loop()
             )
+            return True, "Connected successfully"
 
     async def __ws_handler(self, client: WebSocketClientProtocol) -> None:
         try:
@@ -225,7 +242,7 @@ class NaxApi:
                     self._ws_client_connected = False
                     for callback in self._connection_subscriptions:
                         callback(self._ws_client_connected)
-                    threading.Timer(1, self._reconnect).start()
+                    self._reconnect()
                     return
                 try:
                     while json_raw_messages:
