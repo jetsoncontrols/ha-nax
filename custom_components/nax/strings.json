@@ -9,6 +9,15 @@
           "username": "Username",
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "NAX Configuration",
+        "description": "Please enter the IP and username/password",
+        "data": {
+          "host": "Host",
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -17,7 +26,8 @@
       "unknown": "Unknown Error"
     },
     "abort": {
-      "already_configured": "Already Configured"
+      "already_configured": "Already Configured",
+      "reconfigure_successful": "Reconfigure Successful"
     }
   }
 }

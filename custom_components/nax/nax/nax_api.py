@@ -1,7 +1,6 @@
 """Websocket API for DM Nax devices."""
 
 import asyncio
-import time
 from collections.abc import Callable
 import json
 import logging
@@ -9,9 +8,7 @@ import ssl
 import threading
 from typing import Any
 
-import requests
-from requests import ConnectTimeout
-from urllib3.exceptions import MaxRetryError
+import httpx
 import websockets
 from websockets import WebSocketClientProtocol
 from websockets.extensions import permessage_deflate
@@ -28,7 +25,6 @@ class NaxApi:
         self, ip: str, username: str, password: str, http_fallback: bool = False
     ) -> None:
         """Initialize the NaxApi class."""
-        requests.packages.urllib3.disable_warnings()  # Disable SSL warnings for self signed certificates
         self._ip = ip
         self._username = username
         self._password = password
@@ -37,7 +33,8 @@ class NaxApi:
         self._ws_client: WebSocketClientProtocol | None = None
         self._ws_client_connected: bool = False
         self._ws_task: asyncio.Task | None = None
-        self._loginResponse: requests.Response | None = None
+        self._reconnect_task: asyncio.Task | None = None
+        self._loginResponse: httpx.Response | None = None
         self._json_state: dict[str, Any] = {}
         self._data_subscriptions: dict[str, list[Callable[[str, Any], None]]] = {}
         self._subscribe_data_lock = threading.RLock()
@@ -64,30 +61,32 @@ class NaxApi:
             return None
         return f"wss://{self._ip}/websockify"
 
-    def http_login(self) -> tuple[bool, str]:
+    async def http_login(self) -> tuple[bool, str]:
         """Log in to the NAX system."""
         try:
-            userLoginGetResponse = requests.get(
-                url=self.__get_login_url(), verify=False, timeout=5
-            )
-        except (ConnectTimeout, MaxRetryError, ConnectionRefusedError) as e:
-            return False, f"Could not connect: {e.reason}"
-        self._loginResponse = requests.post(
-            url=self.__get_login_url(),
-            cookies={"TRACKID": userLoginGetResponse.cookies["TRACKID"]},
-            headers={
-                "Origin": self.get_base_url(),
-                "Referer": self.__get_login_url(),
-            },
-            data={"login": self._username, "passwd": self._password},
-            verify=False,
-            timeout=5,
-        )
-        if (
-            self._loginResponse.status_code != 200
-            or "CREST-XSRF-TOKEN" not in self._loginResponse.headers
-        ):
-            return False, "Login failed"
+            async with httpx.AsyncClient(verify=False) as client:
+                userLoginGetResponse = await client.get(
+                    url=self.__get_login_url(), timeout=5
+                )
+                self._loginResponse = await client.post(
+                    url=self.__get_login_url(),
+                    cookies={"TRACKID": userLoginGetResponse.cookies["TRACKID"]},
+                    headers={
+                        "Origin": self.get_base_url(),
+                        "Referer": self.__get_login_url(),
+                    },
+                    data={"login": self._username, "passwd": self._password},
+                    timeout=5,
+                )
+        except (httpx.ConnectTimeout, httpx.NetworkError) as e:
+            return False, f"Could not connect: {e}"
+
+        if self._loginResponse.is_error:
+            return False, f"Login attempt failed: {self._loginResponse.text}"
+
+        if "CREST-XSRF-TOKEN" not in self._loginResponse.headers:
+            return False, "Login attempt failed: Token missing in login response"
+
         self._loginResponse.headers["X-CREST-XSRF-TOKEN"] = self._loginResponse.headers[
             "CREST-XSRF-TOKEN"
         ]
@@ -118,46 +117,48 @@ class NaxApi:
             threading.Thread(target=close_ws_client).start()
 
     def _reconnect(self) -> None:
-        _LOGGER.error("_reconnect called")
-        def reconnect_coroutine():
-            _LOGGER.error("reconnect_coroutine called")
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            connected = False
-            while not connected:
-                _LOGGER.error("reconnect while loop started")
-                http_connected, http_connect_message = loop.run_until_complete(self.http_login())
-                if http_connected:
-                    ws_connected, ws_connect_message = loop.run_until_complete(self.async_upgrade_websocket())
-                    if not ws_connected:
-                        _LOGGER.error(f"Could not reconnect to NAX (WS): {ws_connect_message}")
-                    connected = ws_connected
-                else:
-                    _LOGGER.error(f"Could not reconnect to NAX (HTTP): {http_connect_message}")  # noqa: G004
-                    time.sleep(1)  # wait for 1 second before trying to reconnect
-            loop.close()
-        asyncio.get_event_loop().call_later(1, reconnect_coroutine)
+        _LOGGER.warning("Reconnecting")
+
+        async def reconnect_coroutine():
+            while True:
+                http_connect, http_msg = await self.http_login()
+                ws_connect = False
+                ws_msg = ""
+                if http_connect:
+                    ws_connect, ws_msg = await self.async_upgrade_websocket()
+                    if ws_connect:
+                        return
+                if not http_connect or not ws_connect:
+                    _LOGGER.error(
+                        f"Could not reconnect to NAX: HTTP: {http_msg}, WS: {ws_msg}"  # noqa: G004
+                    )
+                    self._ws_client_connected = False
+                    for callback in self._connection_subscriptions:
+                        callback(self._ws_client_connected)
+                await asyncio.sleep(3)  # wait before trying to reconnect
+
+        self._reconnect_task = asyncio.create_task(reconnect_coroutine())
 
     def __get_request(self, path: str):
-        get_request = requests.get(
+        get_request = httpx.get(
             url=self.get_base_url() + path,
             headers=self._loginResponse.headers,
             cookies=self._loginResponse.cookies,
             verify=False,
             timeout=5,
         )
-        if get_request.ok:
+        if get_request.is_success:
             try:
-                return json.loads(get_request.text)
+                return get_request.json()
             except json.JSONDecodeError:
                 return get_request.text
-        else:
+        elif not get_request.is_redirect:
             _LOGGER.error(
-                f"Get request for {get_request.url} failed: {get_request.status_code}"  # noqa: G004
+                f"Get request for {get_request.url} failed: {get_request.status_code}: text: {get_request.text}"  # noqa: G004
             )
 
     def __post_request(self, path: str, json_data: Any | None) -> Any:
-        post_request = requests.post(
+        post_request = httpx.post(
             url=self.get_base_url() + path,
             headers=self._loginResponse.headers,
             cookies=self._loginResponse.cookies,
@@ -165,14 +166,14 @@ class NaxApi:
             verify=False,
             timeout=5,
         )
-        if post_request.ok:
+        if post_request.is_success:
             try:
-                return json.loads(post_request.text)
+                return post_request.json()
             except json.JSONDecodeError:
                 return post_request.text
         else:
             _LOGGER.error(
-                f"Post request for {post_request.url} failed: {post_request.status_code}"  # noqa: G004
+                f"Post request for {post_request.url} failed: {post_request.status_code} text: {post_request.text}"  # noqa: G004
             )
 
     async def async_upgrade_websocket(self) -> tuple[bool, str]:
@@ -186,7 +187,10 @@ class NaxApi:
             "Accept-Encoding": "gzip, deflate, br",
             "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
             "Cookie": "; ".join(
-                [f"{i}={j}" for i, j in self._loginResponse.cookies.get_dict().items()]
+                [
+                    f"{name}={value}"
+                    for name, value in self._loginResponse.cookies.items()
+                ]
             ),
         }
 
@@ -239,9 +243,6 @@ class NaxApi:
                     websockets.exceptions.ConnectionClosedError,
                 ):
                     _LOGGER.warning("Websocket Connection closed")
-                    self._ws_client_connected = False
-                    for callback in self._connection_subscriptions:
-                        callback(self._ws_client_connected)
                     self._reconnect()
                     return
                 try:
@@ -352,20 +353,19 @@ class NaxApi:
     ) -> Any | None:
         parts = path.split(path_separator)
         for part in parts:
-            if isinstance(json_obj, dict) and part in json_obj:
-                json_obj = json_obj[part]
-            else:
-                return json_obj  # Was none previously
+            if isinstance(json_obj, dict):
+                json_obj = json_obj.get(part, None)
         return json_obj
 
     def __get_data(
         self, data_path: str
     ) -> dict[str, Any] | str | bool | int | float | None:
-        if self.get_websocket_connected():
-            return self.__get_value_by_json_path(self._json_state, data_path)
-        return self.__get_value_by_json_path(
-            self.__get_request(path=f"/{data_path.replace('.', '/')}"), data_path
-        )
+        json_state_data = self.__get_value_by_json_path(self._json_state, data_path)
+        if json_state_data is not None:
+            return json_state_data
+        if self._http_fallback:
+            get_data = self.__get_request(path=f"/{data_path.replace('.', '/')}")
+            return self.__get_value_by_json_path(get_data, data_path)
 
     async def __put_data(self, data_path: str, json_data: Any) -> None:
         if self.get_websocket_connected():
@@ -490,7 +490,8 @@ class NaxApi:
                 "address": stream["NetworkAddressStatus"],
                 "name": stream["SessionNameStatus"],
             }
-            for stream in streams.values() if stream
+            for stream in streams.values()
+            if stream
         ]
 
     def get_stream_zone_receiver_mapping(self, zone_output: str) -> str | None:

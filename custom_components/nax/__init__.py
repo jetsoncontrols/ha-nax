@@ -4,6 +4,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 
 from .const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, DOMAIN
 from .nax.nax_api import NaxApi
@@ -42,12 +43,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=True
     )
 
-    connected, connect_message = await hass.async_add_executor_job(api.http_login)
+    connected, connect_message = await api.http_login()
     if connected:
-        await api.async_upgrade_websocket()
-        return True
-    _LOGGER.error(f"Could not connect to NAX: {connect_message}")  # noqa: G004
-    return False
+        ws_connected, ws_message = await api.async_upgrade_websocket()
+        return ws_connected
+    raise ConfigEntryNotReady(f"Could not connect to NAX: {connect_message}")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

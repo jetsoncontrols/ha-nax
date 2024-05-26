@@ -41,13 +41,12 @@ async def async_setup_entry(
 
 
 class NaxBaseSwitch(SwitchEntity):
-
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the switch."""
         super().__init__()
         self.api = api
         self._attr_unique_id = unique_id
-        self._entity_id =  f"switch.{self._attr_unique_id}"
+        self._entity_id = f"switch.{self._attr_unique_id}"
         self.__base_subscriptions()
 
     def __base_subscriptions(self) -> None:
@@ -63,12 +62,12 @@ class NaxBaseSwitch(SwitchEntity):
 
     @property
     def unique_id(self) -> str:
-        """Set unique device_id"""
+        """Set unique device_id."""
         return self._attr_unique_id
 
     @property
     def entity_id(self) -> str:
-        """Provide an entity ID"""
+        """Provide an entity ID."""
         return self._entity_id
 
     @entity_id.setter
@@ -77,7 +76,7 @@ class NaxBaseSwitch(SwitchEntity):
 
     @property
     def should_poll(self) -> bool:
-        """Return if hass should poll this entity"""
+        """Return if hass should poll this entity."""
         return False
 
     @property
@@ -125,7 +124,7 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -152,12 +151,11 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
 
     @property
     def is_on(self):
-        """Is the entity on"""
+        """Is the entity on."""
         return self.api.get_zone_test_tone(self.zone_output)
 
 
 class NaxZoneLoudnessSwitch(NaxBaseSwitch):
-
     def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         super().__init__(api, unique_id)
         self.zone_output = zone_output
@@ -170,7 +168,7 @@ class NaxZoneLoudnessSwitch(NaxBaseSwitch):
             self._generic_update,
         )
         self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
+            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -197,5 +195,5 @@ class NaxZoneLoudnessSwitch(NaxBaseSwitch):
 
     @property
     def is_on(self):
-        """Is the entity on"""
+        """Is the entity on."""
         return self.api.get_zone_loudness(self.zone_output)
