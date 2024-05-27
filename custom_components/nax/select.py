@@ -1,14 +1,12 @@
 import socket
 from typing import Any
 
-from config.custom_components.nax import NaxEntity
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import NaxEntity
 from .const import DOMAIN
 from .nax.nax_api import NaxApi
 
