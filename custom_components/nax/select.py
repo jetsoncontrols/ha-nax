@@ -1,6 +1,7 @@
 import socket
 from typing import Any
 
+from config.custom_components.nax import NaxEntity
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -40,72 +41,10 @@ async def async_setup_entry(
     async_add_entities(entities_to_add)
 
 
-class NaxBaseSelect(SelectEntity):
+class NaxBaseSelect(NaxEntity, SelectEntity):
     def __init__(self, api: NaxApi, unique_id: str) -> None:
-        super().__init__()
-        self.api = api
-        self._attr_unique_id = unique_id
-        self._entity_id = f"select.{self._attr_unique_id}"
-        self.__base_subscriptions()
-
-    def __base_subscriptions(self) -> None:
-        self.api.subscribe_connection_updates(self._update_connection)
-
-    @callback
-    def _generic_update(self, path: str, data: Any) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @callback
-    def _update_connection(self, connected: bool) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @property
-    def unique_id(self) -> str:
-        """Return the unique ID of the switch."""
-        return self._attr_unique_id
-
-    @property
-    def entity_id(self) -> str:
-        """Provide an entity ID"""
-        return self._entity_id
-
-    @entity_id.setter
-    def entity_id(self, new_entity_id) -> None:
-        self._entity_id = new_entity_id
-
-    @property
-    def should_poll(self) -> bool:
-        """Return if hass should poll this entity"""
-        return False
-
-    @property
-    def available(self) -> bool:
-        """Could the resource be accessed during the last update call."""
-        return self.api.get_websocket_connected()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device info."""
-        return DeviceInfo(
-            configuration_url=self.api.get_base_url(),
-            connections={
-                (
-                    device_registry.CONNECTION_NETWORK_MAC,
-                    self.api.get_device_mac_address(),
-                )
-            },
-            identifiers={(DOMAIN, self.api.get_device_serial_number())},
-            serial_number=self.api.get_device_serial_number(),
-            manufacturer=self.api.get_device_manufacturer(),
-            model=self.api.get_device_model(),
-            sw_version=self.api.get_device_firmware_version(),
-            name=self.api.get_device_name(),
-        )
-
-    @property
-    def entity_registry_visible_default(self) -> bool:
-        """If the entity should be visible in the entity registry."""
-        return False
+        super().__init__(api=api, unique_id=unique_id)
+        self.entity_id = f"select.{self._attr_unique_id}"
 
 
 class NaxZoneNightModeSelect(NaxBaseSelect):
@@ -113,15 +52,12 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
         """Initialize the select."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:weather-night"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.NightMode",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -131,13 +67,8 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
 
     @property
     def name(self) -> str:
-        """Return the name of the select."""
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Night Mode"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:weather-night"
 
     @property
     def current_option(self) -> str:
@@ -159,13 +90,11 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         """Initialize the select."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_entity_registry_visible_default = True
+        self._attr_icon = "mdi:multicast"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
-            self._generic_update,
-        )
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
             self._generic_update,
@@ -176,27 +105,13 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         )
         self.api.subscribe_data_updates(
             "Device.NaxAudio.NaxSdp.NaxSdpStreams",
-            self._nax_sdp_update,
+            self._generic_update,
         )
-
-    @callback
-    def _nax_sdp_update(self, path: str, data: Any) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
 
     @property
     def name(self) -> str:
-        """Return the name of the select."""
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Aes67 Stream"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:multicast"
-
-    @property
-    def entity_registry_visible_default(self) -> bool:
-        """If the entity should be visible in the dashboard by default."""
-        return True
 
     @property
     def current_option(self) -> str:
@@ -224,7 +139,8 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
             self.__mux_stream_name(stream)
             for stream in sorted(
                 streams, key=lambda item: socket.inet_aton(item["address"])
-            ) if not self.api.get_aes67_address_is_local(stream["address"])
+            )
+            if not self.api.get_aes67_address_is_local(stream["address"])
         ]
 
     async def async_select_option(self, option: str) -> None:

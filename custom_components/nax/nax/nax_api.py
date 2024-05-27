@@ -247,10 +247,11 @@ class NaxApi:
                     return
                 try:
                     while json_raw_messages:
-                        new_message_json = json.loads(json_raw_messages.pop(0))
+                        json_raw_message = json_raw_messages.pop(0)
+                        new_message_json = json.loads(json_raw_message)
                         self.__process_received_json_message(new_message_json)
                 except json.JSONDecodeError:
-                    _LOGGER.error("Error decoding JSON")
+                    _LOGGER.error(f"Error decoding JSON: {json_raw_message}")  # noqa: G004
         except (asyncio.CancelledError, RuntimeError):
             _LOGGER.debug("Websocket task cancelled")
 

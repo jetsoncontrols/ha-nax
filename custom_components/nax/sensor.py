@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from config.custom_components.nax import NaxEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -100,75 +101,11 @@ async def async_setup_entry(
     async_add_entities(entities_to_add)
 
 
-class NaxBaseSensor(SensorEntity):
-
+class NaxBaseSensor(NaxEntity, SensorEntity):
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the sensor."""
-        super().__init__()
-        self.api = api
-        self._attr_unique_id = unique_id
-        self._entity_id = f"sensor.{self._attr_unique_id}"
-        self.__base_subscriptions()
-
-    def __base_subscriptions(self) -> None:
-        self.api.subscribe_connection_updates(self._update_connection)
-
-
-    @callback
-    def _generic_update(self, path: str, data: Any) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @callback
-    def _update_connection(self, connected: bool) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @property
-    def unique_id(self) -> str:
-        """Set unique device_id"""
-        return self._attr_unique_id
-
-    @property
-    def entity_id(self) -> str:
-        """Provide an entity ID"""
-        return self._entity_id
-
-    @entity_id.setter
-    def entity_id(self, new_entity_id) -> None:
-        self._entity_id = new_entity_id
-
-    @property
-    def should_poll(self) -> bool:
-        """Return if hass should poll this entity"""
-        return False
-
-    @property
-    def available(self) -> bool:
-        """Could the resource be accessed during the last update call."""
-        return self.api.get_websocket_connected()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device info."""
-        return DeviceInfo(
-            configuration_url=self.api.get_base_url(),
-            connections={
-                (
-                    device_registry.CONNECTION_NETWORK_MAC,
-                    self.api.get_device_mac_address(),
-                )
-            },
-            identifiers={(DOMAIN, self.api.get_device_serial_number())},
-            serial_number=self.api.get_device_serial_number(),
-            manufacturer=self.api.get_device_manufacturer(),
-            model=self.api.get_device_model(),
-            sw_version=self.api.get_device_firmware_version(),
-            name=self.api.get_device_name(),
-        )
-
-    @property
-    def entity_registry_visible_default(self) -> bool:
-        """If the entity should be visible in the entity registry."""
-        return False
+        super().__init__(api=api, unique_id=unique_id)
+        self.entity_id = f"sensor.{self._attr_unique_id}"
 
 
 class NaxSourceSignalSensor(NaxBaseSensor):
@@ -178,15 +115,12 @@ class NaxSourceSignalSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.input_id = input_id
+        self._attr_icon = "mdi:waveform"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.InputSources.Inputs.{self.input_id}.IsSignalPresent",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -196,12 +130,8 @@ class NaxSourceSignalSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_input_source_name(self.input_id)} ({self.input_id}) Signal Present"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:waveform"
 
     @property
     def native_value(self) -> bool | None:
@@ -216,15 +146,12 @@ class NaxSourceClippingSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.input_id = input_id
+        self._attr_icon = "mdi:square-wave"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.InputSources.Inputs.{self.input_id}.IsClippingDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -234,12 +161,8 @@ class NaxSourceClippingSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_input_source_name(self.input_id)} ({self.input_id}) Clipping"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:square-wave"
 
     @property
     def native_value(self) -> bool | None:
@@ -254,15 +177,12 @@ class NaxZoneSignalSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:waveform"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.IsSignalDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -272,12 +192,8 @@ class NaxZoneSignalSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Signal Present"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:waveform"
 
     @property
     def native_value(self) -> bool | None:
@@ -292,15 +208,12 @@ class NaxZoneSignalClippingSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:square-wave"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.IsSignalClipping",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -310,12 +223,8 @@ class NaxZoneSignalClippingSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Signal Clipping"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:square-wave"
 
     @property
     def native_value(self) -> bool | None:
@@ -330,15 +239,12 @@ class NaxZoneSpeakerClippingSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:square-wave"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsClippingDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -348,12 +254,8 @@ class NaxZoneSpeakerClippingSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Speaker Clipping"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:square-wave"
 
     @property
     def native_value(self) -> bool | None:
@@ -368,15 +270,12 @@ class NaxZoneCriticalFaultSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:exclamation"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsCriticalFaultDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -386,12 +285,8 @@ class NaxZoneCriticalFaultSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Critical Fault"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:exclamation"
 
     @property
     def native_value(self) -> bool | None:
@@ -406,15 +301,12 @@ class NaxZoneDCFaultSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:current-dc"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsDcFaultDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -424,12 +316,8 @@ class NaxZoneDCFaultSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} DC Fault"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:current-dc"
 
     @property
     def native_value(self) -> bool | None:
@@ -444,15 +332,12 @@ class NaxZoneOverCurrentSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:debug-step-over"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsOverCurrentConditionDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -462,12 +347,8 @@ class NaxZoneOverCurrentSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Over Current"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:debug-step-over"
 
     @property
     def native_value(self) -> bool | None:
@@ -482,15 +363,12 @@ class NaxZoneOverTemperatureSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:fire"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsOverTemperatureConditionDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            f"Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -500,12 +378,8 @@ class NaxZoneOverTemperatureSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Over Temperature"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:fire"
 
     @property
     def native_value(self) -> bool | None:
@@ -520,15 +394,12 @@ class NaxZoneVoltageFaultSensor(NaxBaseSensor):
         """Initialize the sensor."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self._attr_icon = "mdi:flash-triangle"
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
             f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.Speaker.Faults.IsVoltageFaultDetected",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.DeviceInfo.Name",
             self._generic_update,
         )
         self.api.subscribe_data_updates(
@@ -538,12 +409,8 @@ class NaxZoneVoltageFaultSensor(NaxBaseSensor):
 
     @property
     def name(self) -> str:
+        """Return the name of the entity."""
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Voltage Fault"
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to use in the frontend, if any."""
-        return "mdi:flash-triangle"
 
     @property
     def native_value(self) -> bool | None:

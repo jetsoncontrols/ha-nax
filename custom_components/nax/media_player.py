@@ -1,22 +1,25 @@
 """Support for Nax media player."""
 
 from typing import Any
+
 import numpy
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.device_registry import DeviceInfo
+
+from config.custom_components.nax import NaxEntity
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerState,
     MediaType,
 )
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_NAME
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry
-from .nax.nax_api import NaxApi
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .nax.nax_api import NaxApi
 
 
 async def async_setup_entry(
@@ -42,11 +45,10 @@ async def async_setup_entry(
 
 
 # https://developers.home-assistant.io/docs/core/entity/media-player
-class NaxMediaPlayer(MediaPlayerEntity):
+class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     """Representation of an NAX media player."""
 
     _attr_device_class = "speaker"
-    _attr_should_poll = False
     _attr_supported_features = (
         MediaPlayerEntityFeature.VOLUME_SET
         | MediaPlayerEntityFeature.VOLUME_STEP
@@ -63,11 +65,10 @@ class NaxMediaPlayer(MediaPlayerEntity):
         unique_id: str,
         zone_output: str,
     ) -> None:
-        super().__init__()
-        self.api = api
-        self._attr_unique_id = unique_id
-        self._entity_id = f"media_player.{self._attr_unique_id}"
+        super().__init__(api=api, unique_id=unique_id)
+        self.entity_id = f"media_player.{self._attr_unique_id}"
         self.zone_output = zone_output
+        self._attr_entity_registry_visible_default = True
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -97,33 +98,10 @@ class NaxMediaPlayer(MediaPlayerEntity):
             )
         self.api.subscribe_connection_updates(self._update_connection)
 
-    @callback
-    def _generic_update(self, path: str, data: Any) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @callback
-    def _update_connection(self, connected: bool) -> None:
-        self.schedule_update_ha_state(force_refresh=False)
-
-    @property
-    def unique_id(self) -> str:
-        """Set unique device_id"""
-        return self._attr_unique_id
-
-    @property
-    def entity_id(self) -> str:
-        """Provide an entity ID"""
-        return self._entity_id
-
-    @entity_id.setter
-    def entity_id(self, new_entity_id) -> None:
-        self._entity_id = new_entity_id
-
     @property
     def name(self) -> str:
-        return (
-            f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)}"
-        )
+        """Return the name of the entity."""
+        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)}"
 
     @property
     def state(self) -> MediaPlayerState | None:
@@ -138,30 +116,6 @@ class NaxMediaPlayer(MediaPlayerEntity):
         if self.api.get_zone_audio_source(self.zone_output) is not None:
             return MediaType.MUSIC
         return None
-
-    @property
-    def available(self) -> bool:
-        """Could the resource be accessed during the last update call."""
-        return self.api.get_websocket_connected()
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device info."""
-        return DeviceInfo(
-            configuration_url=self.api.get_base_url(),
-            connections={
-                (
-                    device_registry.CONNECTION_NETWORK_MAC,
-                    self.api.get_device_mac_address(),
-                )
-            },
-            identifiers={(DOMAIN, self.api.get_device_serial_number())},
-            serial_number=self.api.get_device_serial_number(),
-            manufacturer=self.api.get_device_manufacturer(),
-            model=self.api.get_device_model(),
-            sw_version=self.api.get_device_firmware_version(),
-            name=self.api.get_device_name(),
-        )
 
     @property
     def volume_level(self) -> float | None:
