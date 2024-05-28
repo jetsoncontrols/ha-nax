@@ -117,7 +117,7 @@ class NaxApi:
             threading.Thread(target=close_ws_client).start()
 
     def _reconnect(self) -> None:
-        _LOGGER.warning("Reconnecting")
+        _LOGGER.warning("Reconnecting to NAX")
 
         async def reconnect_coroutine():
             while True:
@@ -229,6 +229,7 @@ class NaxApi:
         try:
             receive_buffer = ""
             json_raw_messages = []
+
             await client.send("/Device/")  # Request all device data
 
             while self._ws_task is not None and not self._ws_task.done():
@@ -242,7 +243,7 @@ class NaxApi:
                     websockets.exceptions.ConnectionClosedOK,
                     websockets.exceptions.ConnectionClosedError,
                 ):
-                    _LOGGER.warning("Websocket Connection closed")
+                    _LOGGER.debug("Websocket Connection closed")
                     self._reconnect()
                     return
                 try:
