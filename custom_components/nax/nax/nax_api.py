@@ -117,8 +117,7 @@ class NaxApi:
             threading.Thread(target=close_ws_client).start()
 
     def _reconnect(self) -> None:
-        _LOGGER.warning("Reconnecting to NAX")
-
+        _LOGGER.debug("Reconnecting to NAX")
         async def reconnect_coroutine():
             while True:
                 http_connect, http_msg = await self.http_login()
@@ -127,6 +126,7 @@ class NaxApi:
                 if http_connect:
                     ws_connect, ws_msg = await self.async_upgrade_websocket()
                     if ws_connect:
+                        _LOGGER.debug("Reconnected to NAX")
                         return
                 if not http_connect or not ws_connect:
                     _LOGGER.error(
