@@ -98,7 +98,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def name(self) -> str:
         """Return the name of the entity."""
-        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)}"
+        return (
+            f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)}"
+        )
 
     @property
     def state(self) -> MediaPlayerState | None:
@@ -204,9 +206,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     def __mux_source_name(self, input_source: str) -> str:
         if not input_source:
             return ""
-        return f"{self.api.get_input_source_name(input_source)} ({input_source})"
+        return f"{self.api.get_input_source_name(input_source)} ({input_source}, {self.api.get_aes67_address_for_input(input_source)})"
 
     def __demux_source_name(self, source_name: str) -> str:
         if not source_name:
             return ""
-        return source_name.split(" (", 1)[1][:-1]
+        return source_name.split(" (", 1)[1][:-1].split(", ", 1)[0]

@@ -118,6 +118,7 @@ class NaxApi:
 
     def _reconnect(self) -> None:
         _LOGGER.debug("Reconnecting to NAX")
+
         async def reconnect_coroutine():
             while True:
                 http_connect, http_msg = await self.http_login()
@@ -528,6 +529,23 @@ class NaxApi:
             if stream["NetworkAddressStatus"] == address:
                 return True
         return False
+
+    def get_aes67_address_for_input(self, input: str) -> str | None:
+        """Get the AES67 address for a specific input.
+
+        Args:
+            input: The input identifier.
+
+        Returns:
+            The AES67 address for the specified input as a string, or None if the address is not available.
+
+        """
+        naxAudio = self.__get_data("Device.NaxAudio")
+        naxTxStreams = naxAudio["StreamReferenceMapping"]["NaxTxStreams"]
+        for stream in naxTxStreams:
+            if naxTxStreams[stream]["Path"] == f"InputSources/Inputs/{input}":
+                return naxAudio["NaxTx"]["NaxTxStreams"][stream]["NetworkAddressStatus"]
+        return None
 
     def get_nax_rx_stream_address(self, streamer: str) -> str | None:
         """Get the network address for a specific NaxRx streamer.
