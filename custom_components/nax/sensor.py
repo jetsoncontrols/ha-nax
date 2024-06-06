@@ -52,6 +52,13 @@ async def async_setup_entry(
                 zone_output=zone,
             )
         )
+        entities_to_add.append(
+            NaxZoneCastingActiveSensor(
+                api=api,
+                unique_id=f"{mac_address}_{zone}_casting_active",
+                zone_output=zone,
+            )
+        )
         if api.get_zone_amplification_supported(zone):
             entities_to_add.append(
                 NaxZoneSpeakerClippingSensor(
@@ -104,6 +111,37 @@ class NaxBaseSensor(NaxEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(api=api, unique_id=unique_id)
         self.entity_id = f"sensor.{self._attr_unique_id}"
+
+
+class NaxZoneCastingActiveSensor(NaxBaseSensor):
+    """Representation of an NAX zone casting active sensor."""
+
+    def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
+        """Initialize the sensor."""
+        super().__init__(api, unique_id)
+        self.zone_output = zone_output
+        self._attr_icon = "mdi:cast-audio"
+        self.__subscriptions()
+
+    def __subscriptions(self) -> None:
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneBasedProviders.IsCastingActive",
+            self._generic_update,
+        )
+        self.api.subscribe_data_updates(
+            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
+            self._generic_update,
+        )
+
+    @property
+    def name(self) -> str:
+        """Return the name of the entity."""
+        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Casting Active"
+
+    @property
+    def native_value(self) -> bool | None:
+        """Return the state of the signal."""
+        return self.api.get_zone_casting_active(self.zone_output)
 
 
 class NaxSourceSignalSensor(NaxBaseSensor):

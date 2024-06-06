@@ -258,6 +258,7 @@ class NaxApi:
             _LOGGER.debug("Websocket task cancelled")
 
     def __process_received_json_message(self, json_message: dict[str, Any]) -> None:
+        # print(json.dumps(json_message, indent=4))
         if "Actions" in json_message:
             for action in json_message["Actions"]:
                 for result in action["Results"]:
@@ -266,7 +267,6 @@ class NaxApi:
                             f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"  # noqa: G004
                         )
             return
-        # print(json.dumps(json_message, indent=4))
         nax_custom_merger.merge(self._json_state, json_message)
         new_message_paths = self.__get_json_paths(json_message)
         matching_paths = [
@@ -630,6 +630,22 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["IsSignalDetected"]
+
+    def get_zone_casting_active(self, zone_output: str) -> bool | None:
+        """Get the casting active status for a specific zone output.
+
+        Args:
+            zone_output: The zone output identifier.
+
+        Returns:
+            The casting active status for the specified zone output as a boolean, or None if the status is not available.
+
+        """
+        zone_outputs_json = self.__get_zone_outputs()
+        if zone_outputs_json is not None:
+            return zone_outputs_json[zone_output]["ZoneBasedProviders"][
+                "IsCastingActive"
+            ]
 
     def get_zone_signal_clipping(self, zone_output: str) -> bool | None:
         """Get the signal clipping status for a specific zone output.
