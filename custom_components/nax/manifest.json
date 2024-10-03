@@ -5,7 +5,7 @@
     "integration_type": "device",
     "config_flow": true,
     "documentation": "https://www.crestron.com/Products/Featured-Solutions/Audio-Over-IP",
-    "requirements": ["deepmerge==1.1.1", "websockets==12.0", "httpx==0.27.0"],
+    "requirements": ["deepmerge", "websockets", "httpx"],
     "dependencies": [],
     "codeowners": ["@scottshanafelt"],
     "iot_class": "local_push"

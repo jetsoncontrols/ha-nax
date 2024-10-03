@@ -1,30 +1,15 @@
-from .nax_api import NaxApi
+from config.custom_components.nax.nax.nax_api import NaxApi
 import json
 import asyncio
 
 
 async def test(api: NaxApi):
-    connected, message = await naxApi.login()
+    connected, message = await naxApi.http_login()
     print(f"Login {str(connected)}: " + message)
     if connected:
-        # print(json.dumps(naxApi.get_request(path="/Device/InputSources"), indent=2))
-        # print(json.dumps(naxApi.get_request(path="/Device/DeviceInfo"), indent=2))
-        # print(json.dumps(naxApi.get_request(path="/Device/AvMatrixRouting"), indent=2))
-        # include_data = {
-        #     "Device": {
-        #         "DeviceOperations": {
-        #             "EnterStandby": False,
-        #         }
-        #     }
-        # }
-
-        # {
-        #                     "Device": {
-        #                         "DeviceOperations": {
-        #                             "EnterStandby": False,
-        #                         }
-        #                     }
-        #                 }
+        print(json.dumps(naxApi.get_data(data_path="Device"), indent=2))
+        # print(json.dumps(naxApi.get_data(data_path="Device.MediaNavigation"), indent=2))
+        # print(json.dumps(naxApi.get_data(data_path="Device.NaxAudio"), indent=2))
 
         # print(
         #     json.dumps(
@@ -47,8 +32,6 @@ async def test(api: NaxApi):
         #     )
         # )
 
-        # print(json.dumps(naxApi.get_request(path="/Device/AvMatrixRouting/Longpoll"), indent=2))
-
         # zoneOutputsJson = naxApi.get_request(path="/Device/ZoneOutputs")
         # for zoneOutput in zoneOutputsJson["Device"]["ZoneOutputs"]["Zones"]:
         #     print(
@@ -58,9 +41,10 @@ async def test(api: NaxApi):
         #         )
         #     )
 
-        # naxApi.logout()
-        pass
+        naxApi.logout()
 
 
-naxApi = NaxApi(ip="192.168.1.58", username="admin", password="password")
+naxApi = NaxApi(
+    ip="192.168.1.195", username="admin", password="password", http_fallback=True
+)
 asyncio.run(test(naxApi))

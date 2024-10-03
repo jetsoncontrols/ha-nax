@@ -258,7 +258,7 @@ class NaxApi:
             _LOGGER.debug("Websocket task cancelled")
 
     def __process_received_json_message(self, json_message: dict[str, Any]) -> None:
-        # print(json.dumps(json_message, indent=4))
+        print(json.dumps(json_message, indent=4))
         if "Actions" in json_message:
             for action in json_message["Actions"]:
                 for result in action["Results"]:
@@ -360,7 +360,7 @@ class NaxApi:
                 json_obj = json_obj.get(part, None)
         return json_obj
 
-    def __get_data(
+    def get_data(
         self, data_path: str
     ) -> dict[str, Any] | str | bool | int | float | None:
         json_state_data = self.__get_value_by_json_path(self._json_state, data_path)
@@ -370,7 +370,7 @@ class NaxApi:
             get_data = self.__get_request(path=f"/{data_path.replace('.', '/')}")
             return self.__get_value_by_json_path(get_data, data_path)
 
-    async def __put_data(self, data_path: str, json_data: Any) -> None:
+    async def put_data(self, data_path: str, json_data: Any) -> None:
         if self.get_websocket_connected():
             await self._ws_client.send(json.dumps(json_data))
         elif self._http_fallback:
@@ -385,7 +385,7 @@ class NaxApi:
             The name of the device as a string, or None if the name is not available.
 
         """
-        return self.__get_data("Device.DeviceInfo.Name")
+        return self.get_data("Device.DeviceInfo.Name")
 
     def get_device_mac_address(self) -> str | None:
         """Get the MAC address of the device.
@@ -394,7 +394,7 @@ class NaxApi:
             The MAC address of the device as a string, or None if the MAC address is not available.
 
         """
-        return self.__get_data("Device.DeviceInfo.MacAddress")
+        return self.get_data("Device.DeviceInfo.MacAddress")
 
     def get_device_manufacturer(self) -> str | None:
         """Get the manufacturer of the device.
@@ -403,7 +403,7 @@ class NaxApi:
             The manufacturer of the device as a string, or None if the name is not available.
 
         """
-        return self.__get_data("Device.DeviceInfo.Manufacturer")
+        return self.get_data("Device.DeviceInfo.Manufacturer")
 
     def get_device_model(self) -> str | None:
         """Get the model of the device.
@@ -412,7 +412,7 @@ class NaxApi:
             The model of the device as a string, or None if the model is not available.
 
         """
-        return self.__get_data("Device.DeviceInfo.Model")
+        return self.get_data("Device.DeviceInfo.Model")
 
     def get_device_firmware_version(self) -> str | None:
         """Get the firmware version of the device.
@@ -421,7 +421,7 @@ class NaxApi:
             The firmware version of the device as a string, or None if the version is not available.
 
         """
-        return self.__get_data("Device.DeviceInfo.DeviceVersion")
+        return self.get_data("Device.DeviceInfo.DeviceVersion")
 
     def get_device_serial_number(self) -> str | None:
         """Get the serial number of the device.
@@ -430,10 +430,10 @@ class NaxApi:
             The serial number of the device as a string, or None if the serial number is not available.
 
         """
-        return self.__get_data("Device.DeviceInfo.SerialNumber")
+        return self.get_data("Device.DeviceInfo.SerialNumber")
 
     def __get_zone_outputs(self) -> dict[str:Any] | None:
-        return self.__get_data("Device.ZoneOutputs.Zones")
+        return self.get_data("Device.ZoneOutputs.Zones")
 
     def get_all_zone_outputs(self) -> list[str]:
         """Get a list of all zone outputs.
@@ -473,7 +473,7 @@ class NaxApi:
             The audio source for the specified zone output as a string, or None if the audio source is not available.
 
         """
-        zone_routes = self.__get_data("Device.AvMatrixRouting.Routes")
+        zone_routes = self.get_data("Device.AvMatrixRouting.Routes")
         if zone_routes and zone_output in zone_routes:
             if "AudioSource" in zone_routes[zone_output]:
                 if zone_routes[zone_output]["AudioSource"] != "":
@@ -487,7 +487,7 @@ class NaxApi:
             A list of available AES67 streams as strings, or None if no streams are available.
 
         """
-        streams = self.__get_data("Device.NaxAudio.NaxSdp.NaxSdpStreams")
+        streams = self.get_data("Device.NaxAudio.NaxSdp.NaxSdpStreams")
         return [
             {
                 "address": stream["NetworkAddressStatus"],
@@ -507,7 +507,7 @@ class NaxApi:
             The receiver mapping for the specified zone output as a string, or None if the mapping is not available.
 
         """
-        rx_mappings = self.__get_data(
+        rx_mappings = self.get_data(
             "Device.NaxAudio.StreamReferenceMapping.NaxRxStreams"
         )
         for streamer in rx_mappings:
@@ -524,7 +524,7 @@ class NaxApi:
             A boolean indicating if the address is local.
 
         """
-        tx_streams = self.__get_data("Device.NaxAudio.NaxTx.NaxTxStreams")
+        tx_streams = self.get_data("Device.NaxAudio.NaxTx.NaxTxStreams")
         for stream in tx_streams.values():
             if stream["NetworkAddressStatus"] == address:
                 return True
@@ -540,7 +540,7 @@ class NaxApi:
             The AES67 address for the specified input as a string, or None if the address is not available.
 
         """
-        naxAudio = self.__get_data("Device.NaxAudio")
+        naxAudio = self.get_data("Device.NaxAudio")
         naxTxStreams = naxAudio["StreamReferenceMapping"]["NaxTxStreams"]
         for stream in naxTxStreams:
             if naxTxStreams[stream]["Path"] == f"InputSources/Inputs/{input}":
@@ -557,7 +557,7 @@ class NaxApi:
             The network address for the specified NaxRx streamer as a string, or None if the address is not available.
 
         """
-        stream = self.__get_data(f"Device.NaxAudio.NaxRx.NaxRxStreams.{streamer}")
+        stream = self.get_data(f"Device.NaxAudio.NaxRx.NaxRxStreams.{streamer}")
         return stream["NetworkAddressStatus"]
 
     async def set_nax_rx_stream(self, streamer: str, address: str) -> None:
@@ -584,7 +584,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.NaxAudio.NaxRx.NaxRxStreams.{streamer}.NetworkAddressRequested",
             json_data=json_data,
         )
@@ -764,7 +764,7 @@ class NaxApi:
             A list of available input sources as strings, or None if no input sources are available.
 
         """
-        inputs = self.__get_data("Device.InputSources.Inputs")
+        inputs = self.get_data("Device.InputSources.Inputs")
         if inputs:
             return list(inputs.keys())
 
@@ -779,7 +779,7 @@ class NaxApi:
 
         """
         if input_source:
-            return self.__get_data(f"Device.InputSources.Inputs.{input_source}.Name")
+            return self.get_data(f"Device.InputSources.Inputs.{input_source}.Name")
 
     def get_input_source_signal_present(self, input_source: str) -> bool | None:
         """Get the signal present status of a specific input source.
@@ -792,7 +792,7 @@ class NaxApi:
 
         """
         if input_source:
-            return self.__get_data(
+            return self.get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsSignalPresent"
             )
 
@@ -807,7 +807,7 @@ class NaxApi:
 
         """
         if input_source:
-            return self.__get_data(
+            return self.get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsClippingDetected"
             )
 
@@ -821,7 +821,7 @@ class NaxApi:
             The tone profile of the specified zone output as a string, or None if the tone profile is not available.
 
         """
-        return self.__get_data(
+        return self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.ToneProfile"
         )
 
@@ -835,7 +835,7 @@ class NaxApi:
             The test tone status of the specified zone output as a boolean, or None if the status is not available.
 
         """
-        return self.__get_data(
+        return self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsTestToneActive"
         )
 
@@ -858,7 +858,7 @@ class NaxApi:
             The night mode of the specified zone output as a string, or None if the night mode is not available.
 
         """
-        return self.__get_data(
+        return self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.NightMode"
         )
 
@@ -888,7 +888,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.NightMode",
             json_data=json_data,
         )
@@ -903,7 +903,7 @@ class NaxApi:
             The loudness status of the specified zone output as a boolean, or None if the status is not available.
 
         """
-        return self.__get_data(
+        return self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsLoudnessEnabled"
         )
 
@@ -917,7 +917,7 @@ class NaxApi:
             A boolean indicating if amplification is supported for the specified zone output, or None if the information is not available.
 
         """
-        return self.__get_data(
+        return self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
         )
 
@@ -942,7 +942,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsLoudnessEnabled",
             json_data=json_data,
         )
@@ -955,7 +955,7 @@ class NaxApi:
 
         """
         result = []
-        chimes = self.__get_data("Device.DoorChimes.DefaultChimes")
+        chimes = self.get_data("Device.DoorChimes.DefaultChimes")
         for chime in chimes:
             result.append({"id": chime, "name": chimes[chime]["Name"]})  # noqa: PERF401
         return result
@@ -981,7 +981,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.DoorChimes.DefaultChimes.{chime_id}.Play",
             json_data=json_data,
         )
@@ -1010,7 +1010,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsTestToneActive",
             json_data=json_data,
         )
@@ -1039,7 +1039,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.ToneProfile",
             json_data=json_data,
         )
@@ -1068,7 +1068,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.Volume",
             json_data=json_data,
         )
@@ -1097,7 +1097,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsMuted",
             json_data=json_data,
         )
@@ -1122,7 +1122,7 @@ class NaxApi:
                 }
             }
         }
-        await self.__put_data(
+        await self.put_data(
             data_path=f"Device.AvMatrixRouting.Routes.{zone_output}.AudioSource",
             json_data=json_data,
         )
