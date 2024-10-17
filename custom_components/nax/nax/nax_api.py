@@ -157,6 +157,7 @@ class NaxApi:
             _LOGGER.error(
                 f"Get request for {get_request.url} failed: {get_request.status_code}: text: {get_request.text}"  # noqa: G004
             )
+        return None
 
     def __post_request(self, path: str, json_data: Any | None) -> Any:
         post_request = httpx.post(
@@ -176,6 +177,7 @@ class NaxApi:
             _LOGGER.error(
                 f"Post request for {post_request.url} failed: {post_request.status_code} text: {post_request.text}"  # noqa: G004
             )
+            return None
 
     async def async_upgrade_websocket(self) -> tuple[bool, str]:
         """Upgrade previously http_login to websocket."""
@@ -225,21 +227,27 @@ class NaxApi:
                 self.__ws_handler(self._ws_client), asyncio.get_event_loop()
             )
             return True, "Connected successfully"
+        return False, "Connection Failed"
 
     async def __ws_handler(self, client: WebSocketClientProtocol) -> None:
         try:
-            receive_buffer = ""
-            json_raw_messages = []
+            receive_data_buffer = ""
+            json_messages = []
+            decoder = json.JSONDecoder()
 
             await client.send("/Device/")  # Request all device data
 
             while self._ws_task is not None and not self._ws_task.done():
                 try:
-                    receive_buffer += await client.recv()
-                    while "\n" in receive_buffer:
-                        json_raw_message, receive_buffer = receive_buffer.split("\n", 1)
-                        if not json_raw_message.isspace():
-                            json_raw_messages.append(json_raw_message)
+                    receive_data_buffer += await client.recv()
+                    while receive_data_buffer:
+                        try:
+                            result, index = decoder.raw_decode(receive_data_buffer)
+                            json_messages.append(result)
+                            receive_data_buffer = receive_data_buffer[index:].lstrip()
+                        except ValueError:
+                            # Not enough data to decode, read more
+                            break
                 except (
                     websockets.exceptions.ConnectionClosedOK,
                     websockets.exceptions.ConnectionClosedError,
@@ -247,35 +255,36 @@ class NaxApi:
                     _LOGGER.debug("Websocket Connection closed")
                     self._reconnect()
                     return
-                try:
-                    while json_raw_messages:
-                        json_raw_message = json_raw_messages.pop(0)
-                        new_message_json = json.loads(json_raw_message)
-                        self.__process_received_json_message(new_message_json)
-                except json.JSONDecodeError:
-                    _LOGGER.error(f"Error decoding JSON: {json_raw_message}")  # noqa: G004
+                except Exception:
+                    _LOGGER.exception("Error occurred while receiving json data")
+                while json_messages:
+                    json_message = json_messages.pop(0)
+                    self.__process_received_json_message(json_message)
         except (asyncio.CancelledError, RuntimeError):
             _LOGGER.debug("Websocket task cancelled")
 
     def __process_received_json_message(self, json_message: dict[str, Any]) -> None:
-        print(json.dumps(json_message, indent=4))
-        if "Actions" in json_message:
-            for action in json_message["Actions"]:
-                for result in action["Results"]:
-                    if result["StatusInfo"] != "OK":
-                        _LOGGER.error(
-                            f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"  # noqa: G004
-                        )
-            return
-        nax_custom_merger.merge(self._json_state, json_message)
-        new_message_paths = self.__get_json_paths(json_message)
-        matching_paths = [
-            path for path in new_message_paths if path in self._data_subscriptions
-        ]
-        for path in matching_paths:
-            matching_path_value = self.__get_value_by_json_path(json_message, path)
-            for callback in self._data_subscriptions[path]:
-                callback(path, matching_path_value)
+        try:
+            # print(json.dumps(json_message, indent=4))
+            if "Actions" in json_message:
+                for action in json_message["Actions"]:
+                    for result in action["Results"]:
+                        if result["StatusInfo"] != "OK":
+                            _LOGGER.error(
+                                f"Error in action: Path: {result['Path']}, Property: {result['Property']}, StatusId: {result['StatusId']}, StatusInfo: {result['StatusInfo']}"  # noqa: G004
+                            )
+                return
+            nax_custom_merger.merge(self._json_state, json_message)
+            new_message_paths = self.__get_json_paths(json_message)
+            matching_paths = [
+                path for path in new_message_paths if path in self._data_subscriptions
+            ]
+            for path in matching_paths:
+                matching_path_value = self.__get_value_by_json_path(json_message, path)
+                for callback in self._data_subscriptions[path]:
+                    callback(path, matching_path_value)
+        except Exception:
+            _LOGGER.exception("Error occurred while processing received json data")
 
     def subscribe_connection_updates(
         self,
@@ -363,14 +372,35 @@ class NaxApi:
     def get_data(
         self, data_path: str
     ) -> dict[str, Any] | str | bool | int | float | None:
+        """Retrieve data from the specified path.
+
+        Args:
+            data_path: The path to retrieve data from.
+
+        Returns:
+            The data retrieved from the specified path, which can be of various types.
+
+        """
         json_state_data = self.__get_value_by_json_path(self._json_state, data_path)
         if json_state_data is not None:
             return json_state_data
         if self._http_fallback:
             get_data = self.__get_request(path=f"/{data_path.replace('.', '/')}")
             return self.__get_value_by_json_path(get_data, data_path)
+        return None
 
     async def put_data(self, data_path: str, json_data: Any) -> None:
+        """Send data to the specified path.
+
+        Args:
+            data_path: The path where the data should be sent.
+            json_data: The data to be sent in JSON format.
+
+        Returns:
+            None
+
+        """
+
         if self.get_websocket_connected():
             await self._ws_client.send(json.dumps(json_data))
         elif self._http_fallback:
@@ -462,6 +492,7 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["Name"]
+        return None
 
     def get_zone_audio_source(self, zone_output: str) -> str | None:
         """Get the audio source for a specific zone output.
@@ -513,6 +544,7 @@ class NaxApi:
         for streamer in rx_mappings:
             if rx_mappings[streamer]["Path"] == f"ZoneOutputs/Zones/{zone_output}":
                 return streamer
+        return None
 
     def get_aes67_address_is_local(self, address: str) -> bool:
         """Check if an AES67 address is local.
@@ -602,6 +634,7 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Volume"]
+        return None
 
     def get_zone_muted(self, zone_output: str) -> bool | None:
         """Get the mute status of a specific zone output.
@@ -616,6 +649,7 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["ZoneAudio"]["IsMuted"]
+        return None
 
     def get_zone_signal_detected(self, zone_output: str) -> bool | None:
         """Get the signal detection status for a specific zone output.
@@ -630,6 +664,7 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["IsSignalDetected"]
+        return None
 
     def get_zone_casting_active(self, zone_output: str) -> bool | None:
         """Get the casting active status for a specific zone output.
@@ -646,6 +681,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneBasedProviders"][
                 "IsCastingActive"
             ]
+        return None
 
     def get_zone_signal_clipping(self, zone_output: str) -> bool | None:
         """Get the signal clipping status for a specific zone output.
@@ -660,6 +696,7 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             return zone_outputs_json[zone_output]["IsSignalClipping"]
+        return None
 
     def get_zone_speaker_clipping(self, zone_output: str) -> bool | None:
         """Get the clipping status of a specific zone output's speaker.
@@ -676,6 +713,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
                 "IsClippingDetected"
             ]
+        return None
 
     def get_zone_speaker_critical_fault(self, zone_output: str) -> bool | None:
         """Get the critical fault status of a specific zone output's speaker.
@@ -692,6 +730,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
                 "IsCriticalFaultDetected"
             ]
+        return None
 
     def get_zone_speaker_dc_fault(self, zone_output: str) -> bool | None:
         """Get the DC fault status of a specific zone output's speaker.
@@ -708,6 +747,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
                 "IsDcFaultDetected"
             ]
+        return None
 
     def get_zone_speaker_over_current(self, zone_output: str) -> bool | None:
         """Get the over current status of a specific zone output's speaker.
@@ -724,6 +764,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
                 "IsOverCurrentConditionDetected"
             ]
+        return None
 
     def get_zone_speaker_over_temperature(self, zone_output: str) -> bool | None:
         """Get the over temperature status of a specific zone output's speaker.
@@ -740,6 +781,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
                 "IsOverTemperatureConditionDetected"
             ]
+        return None
 
     def get_zone_speaker_voltage_fault(self, zone_output: str) -> bool | None:
         """Get the voltage fault status of a specific zone output's speaker.
@@ -756,6 +798,7 @@ class NaxApi:
             return zone_outputs_json[zone_output]["ZoneAudio"]["Speaker"]["Faults"][
                 "IsVoltageFaultDetected"
             ]
+        return None
 
     def get_input_sources(self) -> list[str] | None:
         """Get the list of available input sources.
@@ -767,6 +810,7 @@ class NaxApi:
         inputs = self.get_data("Device.InputSources.Inputs")
         if inputs:
             return list(inputs.keys())
+        return None
 
     def get_input_source_name(self, input_source: str) -> str | None:
         """Get the name of a specific input source.
@@ -780,6 +824,7 @@ class NaxApi:
         """
         if input_source:
             return self.get_data(f"Device.InputSources.Inputs.{input_source}.Name")
+        return None
 
     def get_input_source_signal_present(self, input_source: str) -> bool | None:
         """Get the signal present status of a specific input source.
@@ -795,6 +840,7 @@ class NaxApi:
             return self.get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsSignalPresent"
             )
+        return None
 
     def get_input_source_clipping(self, input_source: str) -> bool | None:
         """Get the clipping status of a specific input source.
@@ -810,6 +856,7 @@ class NaxApi:
             return self.get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsClippingDetected"
             )
+        return None
 
     def get_zone_tone_profile(self, zone_output: str) -> str | None:
         """Get the tone profile of a specific zone output.
