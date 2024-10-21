@@ -10,7 +10,7 @@ import homeassistant.helpers.config_validation as cv
 from .const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, DOMAIN
 from .nax.nax_api import NaxApi
 
-DATA_SCHEME = vol.Schema(
+DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): cv.string,
         vol.Required(CONF_USERNAME): cv.string,
@@ -39,7 +39,7 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 device_name = api.get_device_name()
                 return self.async_create_entry(title=device_name, data=user_input)
         return self.async_show_form(
-            step_id="user", data_schema=DATA_SCHEME, errors=errors
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None):
@@ -65,7 +65,7 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
         return self.async_show_form(
-            step_id="reconfigure", data_schema=DATA_SCHEME, errors=errors
+            step_id="reconfigure", data_schema=DATA_SCHEMA, errors=errors
         )
 
     def check_for_user_input_errors(self, user_input):
