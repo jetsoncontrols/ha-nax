@@ -202,7 +202,7 @@ class NaxApi:
                 self.__get_websocket_url(),
                 ssl=ssl_context,
                 ping_interval=1.0,
-                extra_headers=headers,
+                additional_headers=headers,
                 extensions=[
                     permessage_deflate.ClientPerMessageDeflateFactory(
                         server_max_window_bits=11,
