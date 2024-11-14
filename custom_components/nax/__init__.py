@@ -8,11 +8,20 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers import device_registry
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.storage import Store
 
-from .const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .const import (
+    CONF_HOST,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DOMAIN,
+    STORAGE_LAST_AES67_STREAM_KEY,
+    STORAGE_LAST_INPUT_KEY,
+    STORAGE_VERSION,
+)
 from .nax.nax_api import NaxApi
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +47,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
+
+    store = Store[dict[str, Any]](hass, STORAGE_VERSION, DOMAIN + "_" + entry.entry_id)
+    if not (storage_data := await store.async_load()):
+        storage_data = {
+            STORAGE_LAST_INPUT_KEY: list[str],
+            STORAGE_LAST_AES67_STREAM_KEY: list[str],
+        }
+        await store.async_save(storage_data)
+    entry.runtime_data = store
 
     def on_zones_data_update(path: str, data: any) -> None:
         asyncio.get_event_loop().create_task(
@@ -65,6 +83,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+async def async_remove_entry(hass, entry) -> None:
+    """Handle removal of an entry."""
+    print("async_remove_entry")
+
+
 class NaxEntity(Entity):
     """Nax base entity class."""
 
@@ -78,7 +101,7 @@ class NaxEntity(Entity):
             configuration_url=self.api.get_base_url(),
             connections={
                 (
-                    device_registry.CONNECTION_NETWORK_MAC,
+                    dr.CONNECTION_NETWORK_MAC,
                     self.api.get_device_mac_address(),
                 )
             },

@@ -1,5 +1,4 @@
 import socket
-from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -16,6 +15,8 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Set up Nax select entities from a config entry."""
+
     entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
@@ -40,12 +41,17 @@ async def async_setup_entry(
 
 
 class NaxBaseSelect(NaxEntity, SelectEntity):
+    """Base class for Nax select entities."""
+
     def __init__(self, api: NaxApi, unique_id: str) -> None:
+        """Initialize the base select entity."""
         super().__init__(api=api, unique_id=unique_id)
         self.entity_id = f"select.{self._attr_unique_id}"
 
 
 class NaxZoneNightModeSelect(NaxBaseSelect):
+    """Representation of a Nax Zone Night Mode Select entity."""
+
     def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
         """Initialize the select."""
         super().__init__(api, unique_id)
@@ -69,7 +75,7 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Night Mode"
 
     @property
-    def current_option(self) -> str:
+    def current_option(self) -> str | None:
         """Return the current option."""
         return self.api.get_zone_night_mode(self.zone_output)
 
@@ -84,6 +90,8 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
 
 
 class NaxZoneAes67StreamSelect(NaxBaseSelect):
+    """Representation of a Nax Zone Aes67 Stream Select entity."""
+
     def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
         """Initialize the select."""
         super().__init__(api, unique_id)
@@ -112,7 +120,7 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Aes67 Stream"
 
     @property
-    def current_option(self) -> str:
+    def current_option(self) -> str | None:
         """Return the current option."""
         zone_streamer = self.api.get_stream_zone_receiver_mapping(
             zone_output=self.zone_output
@@ -127,6 +135,7 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
                 break
         if streamer_address:
             return self.__mux_stream_name(matching_stream)
+        return None
 
     @property
     def options(self) -> list[str]:

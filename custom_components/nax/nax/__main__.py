@@ -1,6 +1,7 @@
-from config.custom_components.nax.nax.nax_api import NaxApi
-import json
 import asyncio
+import json
+
+from config.custom_components.nax.nax.nax_api import NaxApi
 
 
 async def test(api: NaxApi):
@@ -8,6 +9,8 @@ async def test(api: NaxApi):
     print(f"Login {str(connected)}: " + message)
     if connected:
         print(json.dumps(naxApi.get_data(data_path="Device"), indent=2))
+
+        await naxApi._ws_task.
         # print(json.dumps(naxApi.get_data(data_path="Device.MediaNavigation"), indent=2))
         # print(json.dumps(naxApi.get_data(data_path="Device.NaxAudio"), indent=2))
 
@@ -45,6 +48,6 @@ async def test(api: NaxApi):
 
 
 naxApi = NaxApi(
-    ip="192.168.1.195", username="admin", password="password", http_fallback=True
+    ip="192.168.1.58", username="admin", password="password", http_fallback=True
 )
 asyncio.run(test(naxApi))

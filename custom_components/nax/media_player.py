@@ -1,8 +1,6 @@
 """Support for Nax media player."""
 
-from typing import Any
-
-import numpy
+import numpy as np
 
 from homeassistant.components.media_player import (
     MediaPlayerEntity,
@@ -13,9 +11,10 @@ from homeassistant.components.media_player import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.storage import Store
 
 from . import NaxEntity
-from .const import DOMAIN
+from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
 from .nax.nax_api import NaxApi
 
 
@@ -25,19 +24,21 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Load NAX media players."""
-    entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
     zone_outputs = await hass.async_add_executor_job(api.get_all_zone_outputs)
 
-    for zone_output in zone_outputs:
-        entities_to_add.append(
-            NaxMediaPlayer(
-                api=api,
-                unique_id=f"{mac_address}_{zone_output}",
-                zone_output=zone_output,
-            )
+    store = config_entry.runtime_data
+
+    entities_to_add = [
+        NaxMediaPlayer(
+            api=api,
+            unique_id=f"{mac_address}_{zone_output}",
+            zone_output=zone_output,
+            store=store,
         )
+        for zone_output in zone_outputs
+    ]
     async_add_entities(entities_to_add)
 
 
@@ -51,7 +52,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         | MediaPlayerEntityFeature.VOLUME_STEP
         | MediaPlayerEntityFeature.VOLUME_MUTE
         | MediaPlayerEntityFeature.PLAY_MEDIA
+        # | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.TURN_OFF
+        # | MediaPlayerEntityFeature.TURN_ON
         | MediaPlayerEntityFeature.SELECT_SOURCE
         | MediaPlayerEntityFeature.SELECT_SOUND_MODE
     )
@@ -61,10 +64,13 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         api: NaxApi,
         unique_id: str,
         zone_output: str,
+        store: Store,
     ) -> None:
+        """Initialize the NaxMediaPlayer."""
         super().__init__(api=api, unique_id=unique_id)
         self.entity_id = f"media_player.{self._attr_unique_id}"
         self.zone_output = zone_output
+        self.store = store
         self._attr_entity_registry_visible_default = True
         self.__subscriptions()
 
@@ -135,7 +141,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         """Turn volume up for media player."""
         await self.api.set_zone_volume(
             self.zone_output,
-            numpy.clip(
+            np.clip(
                 self.api.get_zone_volume(self.zone_output) + self.volume_step * 100,
                 0,
                 1000,
@@ -146,7 +152,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         """Turn volume down for media player."""
         await self.api.set_zone_volume(
             self.zone_output,
-            numpy.clip(
+            np.clip(
                 self.api.get_zone_volume(self.zone_output) - self.volume_step * 100,
                 0,
                 1000,
@@ -168,7 +174,14 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def source(self) -> str | None:
         """Return the current input source."""
+        self.store.
+        print(self.store[STORAGE_LAST_INPUT_KEY][self.entity_id])
+        print(self.store[STORAGE_LAST_AES67_STREAM_KEY][self.entity_id])
+
         zone_audio_source = self.api.get_zone_audio_source(self.zone_output)
+        if self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] is not zone_audio_source:
+            self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] = zone_audio_source
+            self.store.async_save(self.store._data)
         if zone_audio_source:
             return self.__mux_source_name(zone_audio_source)
         return None
@@ -176,12 +189,12 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def source_list(self) -> list[str] | None:
         """List of available input sources."""
-        result = []
         input_sources = self.api.get_input_sources()
-        if input_sources:
-            for input_source in input_sources:
-                result.append(self.__mux_source_name(input_source))
-        return result
+        return (
+            [self.__mux_source_name(input_source) for input_source in input_sources]
+            if input_sources
+            else []
+        )
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
