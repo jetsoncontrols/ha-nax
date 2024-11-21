@@ -1,4 +1,4 @@
-from typing import Any
+"""Module for Nax button entities."""
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
@@ -15,25 +15,28 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Set up Nax button entities from a config entry."""
     entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = api.get_device_mac_address()
 
     chimes = await hass.async_add_executor_job(api.get_chimes)
     if chimes:
-        for chime in chimes:
-            entities_to_add.append(
-                NaxChimePlayButton(
-                    api=api,
-                    unique_id=f"{mac_address}_{chime['id']}_play_chime_button",
-                    chime_id=chime["id"],
-                    chime_name=chime["name"],
-                )
+        entities_to_add.extend(
+            NaxChimePlayButton(
+                api=api,
+                unique_id=f"{mac_address}_{chime['id']}_play_chime_button",
+                chime_id=chime["id"],
+                chime_name=chime["name"],
             )
+            for chime in chimes
+        )
     async_add_entities(entities_to_add)
 
 
 class NaxBaseButton(NaxEntity, ButtonEntity):
+    """Base class for Nax button entities."""
+
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the button."""
         super().__init__(api=api, unique_id=unique_id)

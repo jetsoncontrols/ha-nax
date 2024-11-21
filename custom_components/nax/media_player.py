@@ -174,14 +174,13 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def source(self) -> str | None:
         """Return the current input source."""
-        self.store.
-        print(self.store[STORAGE_LAST_INPUT_KEY][self.entity_id])
-        print(self.store[STORAGE_LAST_AES67_STREAM_KEY][self.entity_id])
+        # print(self.store[STORAGE_LAST_INPUT_KEY][self.entity_id])
+        # print(self.store[STORAGE_LAST_AES67_STREAM_KEY][self.entity_id])
 
         zone_audio_source = self.api.get_zone_audio_source(self.zone_output)
-        if self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] is not zone_audio_source:
-            self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] = zone_audio_source
-            self.store.async_save(self.store._data)
+        # if self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] is not zone_audio_source:
+        #     self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] = zone_audio_source
+        #     self.store.async_save(self.store._data)
         if zone_audio_source:
             return self.__mux_source_name(zone_audio_source)
         return None
