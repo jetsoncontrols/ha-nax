@@ -1,12 +1,17 @@
+"""Module containing the Nax select entities for Home Assistant."""
+
+import asyncio
 import socket
+from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.storage import Store
 
 from . import NaxEntity
-from .const import DOMAIN
+from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
 from .nax.nax_api import NaxApi
 
 
@@ -16,11 +21,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Nax select entities from a config entry."""
-
-    entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
+    store = config_entry.runtime_data
 
+    entities_to_add = []
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
     for zone in zones:
         entities_to_add.append(
@@ -35,6 +40,7 @@ async def async_setup_entry(
                 api=api,
                 unique_id=f"{mac_address}_{zone}_aes67_stream",
                 zone_output=zone,
+                store=store,
             )
         )
     async_add_entities(entities_to_add)
@@ -92,13 +98,34 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
 class NaxZoneAes67StreamSelect(NaxBaseSelect):
     """Representation of a Nax Zone Aes67 Stream Select entity."""
 
-    def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
+    def __init__(
+        self, api: NaxApi, unique_id: str, zone_output: int, store: Store
+    ) -> None:
         """Initialize the select."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
+        self.store = store
+
         self._attr_entity_registry_visible_default = True
         self._attr_icon = "mdi:multicast"
+
+        self._load_store_task = None
+        self._save_store_task = None
         self.__subscriptions()
+
+    async def async_save_store_last_aes67_stream(self, last_aes67_stream: str) -> None:
+        """Save the store data asynchronously."""
+        storage_data = await self.store.async_load()
+        if (
+            storage_data.setdefault(STORAGE_LAST_AES67_STREAM_KEY, {}).get(
+                self.zone_output
+            )
+            != last_aes67_stream
+        ):
+            storage_data[STORAGE_LAST_AES67_STREAM_KEY][self.zone_output] = (
+                last_aes67_stream
+            )
+            await self.store.async_save(storage_data)
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
@@ -132,6 +159,10 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         for stream in streams:
             if stream["address"] == streamer_address:
                 matching_stream = stream
+                if stream["address"] != "0.0.0.0":
+                    self._save_store_task = asyncio.create_task(
+                        self.async_save_store_last_aes67_stream(stream["address"])
+                    )
                 break
         if streamer_address:
             return self.__mux_stream_name(matching_stream)

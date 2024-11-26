@@ -40,6 +40,7 @@ class NaxApi:
         self._subscribe_data_lock = threading.RLock()
         self._connection_subscriptions: list[list[Callable[[bool], None]]] = []
         self._subscribe_connection_lock = threading.RLock()
+        self._put_data_lock = asyncio.Lock()
 
     def get_websocket_connected(self) -> bool:
         """Return True if logged in, False if not."""
@@ -400,13 +401,14 @@ class NaxApi:
             None
 
         """
-
-        if self.get_websocket_connected():
-            await self._ws_client.send(json.dumps(json_data))
-        elif self._http_fallback:
-            await self.__post_request(
-                path=f"/{data_path.replace('.', '/')}", json_data=json_data
-            )
+        async with self._put_data_lock:
+            if self.get_websocket_connected():
+                await self._ws_client.send(json.dumps(json_data))
+                await asyncio.sleep(0.01)  # allow the websocket to process the message
+            else:
+                await self.__post_request(
+                    path=f"/{data_path.replace('.', '/')}", json_data=json_data
+                )
 
     def get_device_name(self) -> str | None:
         """Get the name of the device.

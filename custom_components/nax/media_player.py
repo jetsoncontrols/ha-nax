@@ -1,5 +1,8 @@
 """Support for Nax media player."""
 
+import asyncio
+from typing import Any
+
 import numpy as np
 
 from homeassistant.components.media_player import (
@@ -27,7 +30,6 @@ async def async_setup_entry(
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
     zone_outputs = await hass.async_add_executor_job(api.get_all_zone_outputs)
-
     store = config_entry.runtime_data
 
     entities_to_add = [
@@ -54,7 +56,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         | MediaPlayerEntityFeature.PLAY_MEDIA
         # | MediaPlayerEntityFeature.STOP
         | MediaPlayerEntityFeature.TURN_OFF
-        # | MediaPlayerEntityFeature.TURN_ON
+        | MediaPlayerEntityFeature.TURN_ON
         | MediaPlayerEntityFeature.SELECT_SOURCE
         | MediaPlayerEntityFeature.SELECT_SOUND_MODE
     )
@@ -71,8 +73,36 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         self.entity_id = f"media_player.{self._attr_unique_id}"
         self.zone_output = zone_output
         self.store = store
+
         self._attr_entity_registry_visible_default = True
+
+        self._load_store_task = None
+        self._save_store_task = None
         self.__subscriptions()
+
+    async def async_load_store_last_input(self) -> str | None:
+        """Load the store data asynchronously."""
+        storage_data = await self.store.async_load()
+        if storage_data is None:
+            return None
+        return storage_data.get(STORAGE_LAST_INPUT_KEY, {}).get(self.zone_output)
+
+    async def async_load_store_last_aes67_stream(self) -> str | None:
+        """Load the store data asynchronously."""
+        storage_data = await self.store.async_load()
+        if storage_data is None:
+            return None
+        return storage_data.get(STORAGE_LAST_AES67_STREAM_KEY, {}).get(self.zone_output)
+
+    async def async_save_store_last_input(self, last_input: str) -> None:
+        """Save the store data asynchronously."""
+        storage_data = await self.store.async_load()
+        if (
+            storage_data.setdefault(STORAGE_LAST_INPUT_KEY, {}).get(self.zone_output)
+            != last_input
+        ):
+            storage_data[STORAGE_LAST_INPUT_KEY][self.zone_output] = last_input
+            await self.store.async_save(storage_data)
 
     def __subscriptions(self) -> None:
         self.api.subscribe_data_updates(
@@ -113,7 +143,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         """Return the state of the device."""
         if self.api.get_zone_audio_source(self.zone_output) is not None:
             return MediaPlayerState.PLAYING
-        return MediaPlayerState.IDLE
+        return MediaPlayerState.OFF
 
     @property
     def media_content_type(self) -> MediaType | None:
@@ -167,6 +197,25 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         """Send mute command."""
         await self.api.set_zone_mute(self.zone_output, mute)
 
+    async def async_turn_on(self) -> None:
+        """Turn the media player on."""
+        last_input = await self.async_load_store_last_input()
+        last_aes67_stream = await self.async_load_store_last_aes67_stream()
+        zone_streamer = self.api.get_stream_zone_receiver_mapping(
+            zone_output=self.zone_output
+        )
+        if last_input:
+            await self.api.set_zone_audio_source(self.zone_output, last_input)
+            if last_input == "Aes67" and last_aes67_stream:
+                await self.api.set_nax_rx_stream(
+                    streamer=zone_streamer,
+                    address=last_aes67_stream,
+                )
+        else:
+            await self.api.set_zone_audio_source(
+                self.zone_output, self.api.get_input_sources()[0]
+            )
+
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
         await self.api.set_zone_audio_source(self.zone_output, "")
@@ -174,14 +223,11 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def source(self) -> str | None:
         """Return the current input source."""
-        # print(self.store[STORAGE_LAST_INPUT_KEY][self.entity_id])
-        # print(self.store[STORAGE_LAST_AES67_STREAM_KEY][self.entity_id])
-
         zone_audio_source = self.api.get_zone_audio_source(self.zone_output)
-        # if self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] is not zone_audio_source:
-        #     self.store[STORAGE_LAST_INPUT_KEY][self.entity_id] = zone_audio_source
-        #     self.store.async_save(self.store._data)
         if zone_audio_source:
+            self._save_store_task = asyncio.create_task(
+                self.async_save_store_last_input(zone_audio_source)
+            )
             return self.__mux_source_name(zone_audio_source)
         return None
 

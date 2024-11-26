@@ -51,8 +51,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = Store[dict[str, Any]](hass, STORAGE_VERSION, DOMAIN + "_" + entry.entry_id)
     if not (storage_data := await store.async_load()):
         storage_data = {
-            STORAGE_LAST_INPUT_KEY: list[str],
-            STORAGE_LAST_AES67_STREAM_KEY: list[str],
+            STORAGE_LAST_INPUT_KEY: dict[str, str](),
+            STORAGE_LAST_AES67_STREAM_KEY: dict[str, str](),
         }
         await store.async_save(storage_data)
     entry.runtime_data = store
