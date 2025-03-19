@@ -966,9 +966,13 @@ class NaxApi:
             A boolean indicating if amplification is supported for the specified zone output, or None if the information is not available.
 
         """
-        return self.get_data(
+        speaker = self.get_data(
+            f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.Speaker"
+        )
+        amplification = self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
         )
+        return speaker is not None and amplification
 
     async def set_zone_loudness(self, zone_output: str, active: bool) -> None:
         """Set the loudness status of a specific zone output.

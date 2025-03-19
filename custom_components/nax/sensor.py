@@ -59,7 +59,7 @@ async def async_setup_entry(
                 zone_output=zone,
             )
         )
-        if api.get_zone_amplification_supported(zone):
+        if api.get_zone_amplification_supported(zone):  # Fix
             entities_to_add.append(
                 NaxZoneSpeakerClippingSensor(
                     api=api,
@@ -74,28 +74,28 @@ async def async_setup_entry(
                     zone_output=zone,
                 )
             )
-            entities_to_add.append(
+            entities_to_add.append(  # Fix
                 NaxZoneDCFaultSensor(
                     api=api,
                     unique_id=f"{mac_address}_{zone}_dc_fault",
                     zone_output=zone,
                 )
             )
-            entities_to_add.append(
+            entities_to_add.append(  # Fix
                 NaxZoneOverCurrentSensor(
                     api=api,
                     unique_id=f"{mac_address}_{zone}_over_current",
                     zone_output=zone,
                 )
             )
-            entities_to_add.append(
+            entities_to_add.append(  # Fix
                 NaxZoneOverTemperatureSensor(
                     api=api,
                     unique_id=f"{mac_address}_{zone}_over_temperature",
                     zone_output=zone,
                 )
             )
-            entities_to_add.append(
+            entities_to_add.append(  # Fix
                 NaxZoneVoltageFaultSensor(
                     api=api,
                     unique_id=f"{mac_address}_{zone}_voltage_fault",
