@@ -153,7 +153,7 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
             zone_output=self.zone_output
         )
         streamer_address = self.api.get_nax_rx_stream_address(streamer=zone_streamer)
-        streams = self.api.get_aes67_streams()
+        streams = self.api.get_aes67_streams() or []
         streams.append({"name": "None", "address": "0.0.0.0"})
         matching_stream = None
         for stream in streams:
@@ -171,7 +171,7 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
     @property
     def options(self) -> list[str]:
         """Return the list of available options."""
-        streams = self.api.get_aes67_streams()
+        streams = ( self.api.get_aes67_streams() or [] )
         streams.append({"name": "None", "address": "0.0.0.0"})
         return [
             self.__mux_stream_name(stream)
@@ -193,7 +193,7 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
     def __mux_stream_name(self, stream_arg: dict) -> str:
         if not stream_arg:
             return ""
-        return f"{stream_arg["name"]} ({stream_arg["address"]})"
+        return f"{stream_arg['name']} ({stream_arg['address']})"
 
     def __demux_stream_name(self, stream_arg: str) -> dict:
         if not stream_arg:

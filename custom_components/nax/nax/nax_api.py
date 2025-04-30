@@ -521,6 +521,8 @@ class NaxApi:
 
         """
         streams = self.get_data("Device.NaxAudio.NaxSdp.NaxSdpStreams")
+        if not streams:
+            return None
         return [
             {
                 "address": stream["NetworkAddressStatus"],
@@ -605,6 +607,9 @@ class NaxApi:
             None
 
         """
+        _LOGGER.error(
+            f"{self._ip}: NAX RX Stream Set for Streamer: {streamer} to: {address}"
+        )
         json_data = {
             "Device": {
                 "NaxAudio": {
