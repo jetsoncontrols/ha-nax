@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Callable
+import concurrent.futures
 import json
 import logging
 import ssl
@@ -10,8 +11,11 @@ from typing import Any
 
 import httpx
 import websockets
-from websockets import WebSocketClientProtocol
+from websockets.exceptions import InvalidStatus
 from websockets.extensions import permessage_deflate
+import websockets.legacy
+import websockets.legacy.client
+from websockets.legacy.client import WebSocketClientProtocol
 
 from .misc.custom_merger import nax_custom_merger
 
@@ -29,16 +33,16 @@ class NaxApi:
         self._username = username
         self._password = password
         self._http_fallback = http_fallback
-
-        self._ws_client: WebSocketClientProtocol | None = None
+        self._ws_client: websockets.legacy.client.ClientConnection | None = None  # type: ignore
         self._ws_client_connected: bool = False
-        self._ws_task: asyncio.Task | None = None
+        self._ws_task: concurrent.futures.Future | None = None
         self._reconnect_task: asyncio.Task | None = None
+        self._loginResponse: httpx.Response | None = None
         self._loginResponse: httpx.Response | None = None
         self._json_state: dict[str, Any] = {}
         self._data_subscriptions: dict[str, list[Callable[[str, Any], None]]] = {}
         self._subscribe_data_lock = threading.RLock()
-        self._connection_subscriptions: list[list[Callable[[bool], None]]] = []
+        self._connection_subscriptions: list[Callable[[bool], None]] = []
         self._subscribe_connection_lock = threading.RLock()
         self._put_data_lock = asyncio.Lock()
 
@@ -66,15 +70,20 @@ class NaxApi:
         """Log in to the NAX system."""
         try:
             async with httpx.AsyncClient(verify=False) as client:
-                userLoginGetResponse = await client.get(
-                    url=self.__get_login_url(), timeout=5
-                )
+                login_url = self.__get_login_url()
+                if login_url is None:
+                    return False, "Login URL is None"
+                userLoginGetResponse = await client.get(url=login_url, timeout=5)
                 self._loginResponse = await client.post(
-                    url=self.__get_login_url(),
+                    url=login_url,
                     cookies={"TRACKID": userLoginGetResponse.cookies["TRACKID"]},
                     headers={
-                        "Origin": self.get_base_url(),
-                        "Referer": self.__get_login_url(),
+                        k: v
+                        for k, v in {
+                            "Origin": self.get_base_url(),
+                            "Referer": login_url,
+                        }.items()
+                        if v is not None
                     },
                     data={"login": self._username, "passwd": self._password},
                     timeout=5,
@@ -105,17 +114,18 @@ class NaxApi:
         if self._ws_task is not None:
             self._ws_task.cancel()
             self._ws_task = None
-        if self._ws_client is not None:
-            loop = asyncio.new_event_loop()
 
-            def close_ws_client():
-                asyncio.set_event_loop(loop)
+        loop = asyncio.new_event_loop()
+
+        def close_ws_client():
+            asyncio.set_event_loop(loop)
+            if self._ws_client is not None:
                 future = asyncio.run_coroutine_threadsafe(self._ws_client.close(), loop)
                 future.result()
                 self._ws_client = None
-                loop.close()
+            loop.close()
 
-            threading.Thread(target=close_ws_client).start()
+        threading.Thread(target=close_ws_client).start()
 
     def _reconnect(self) -> None:
         _LOGGER.debug("Reconnecting to NAX")
@@ -142,10 +152,21 @@ class NaxApi:
         self._reconnect_task = asyncio.create_task(reconnect_coroutine())
 
     def __get_request(self, path: str):
+        base_url = self.get_base_url()
+        if base_url is None:
+            _LOGGER.error("Base URL is None, cannot perform GET request")
+            return None
+        if self._loginResponse is None:
+            _LOGGER.error("Login response is None, cannot perform GET request")
+            return None
         get_request = httpx.get(
-            url=self.get_base_url() + path,
-            headers=self._loginResponse.headers,
-            cookies=self._loginResponse.cookies,
+            url=base_url + path,
+            headers=self._loginResponse.headers
+            if self._loginResponse is not None
+            else {},
+            cookies=self._loginResponse.cookies
+            if self._loginResponse is not None
+            else {},
             verify=False,
             timeout=5,
         )
@@ -161,8 +182,15 @@ class NaxApi:
         return None
 
     def __post_request(self, path: str, json_data: Any | None) -> Any:
+        base_url = self.get_base_url()
+        if base_url is None:
+            _LOGGER.error("Base URL is None, cannot perform POST request")
+            return None
+        if self._loginResponse is None:
+            _LOGGER.error("Login response is None, cannot perform POST request")
+            return None
         post_request = httpx.post(
-            url=self.get_base_url() + path,
+            url=base_url + path,
             headers=self._loginResponse.headers,
             cookies=self._loginResponse.cookies,
             json=json_data,
@@ -193,14 +221,22 @@ class NaxApi:
             "Cookie": "; ".join(
                 [
                     f"{name}={value}"
-                    for name, value in self._loginResponse.cookies.items()
+                    for name, value in (
+                        self._loginResponse.cookies.items()
+                        if self._loginResponse is not None
+                        else []
+                    )
                 ]
             ),
         }
 
         try:
-            client: WebSocketClientProtocol = await websockets.connect(
-                self.__get_websocket_url(),
+            ws_url = self.__get_websocket_url()
+            if ws_url is None:
+                _LOGGER.error("WebSocket URL is None, cannot connect")
+                return False, "WebSocket URL is None"
+            client = await websockets.connect(
+                ws_url,
                 ssl=ssl_context,
                 ping_interval=1.0,
                 additional_headers=headers,
@@ -219,8 +255,7 @@ class NaxApi:
                 callback(self._ws_client_connected)
         except ssl.SSLCertVerificationError:
             _LOGGER.exception("An SSL certificate verification error occurred")
-            return False, "Connection Failed, SSL certificate verification error"
-        except websockets.exceptions.InvalidStatusCode:
+        except InvalidStatus:
             _LOGGER.exception("An invalid status code was received")
             return False, "Connection Failed, Invalid status code"
         if self._ws_client is not None:
@@ -240,7 +275,10 @@ class NaxApi:
 
             while self._ws_task is not None and not self._ws_task.done():
                 try:
-                    receive_data_buffer += await client.recv()
+                    data = await client.recv()
+                    if not isinstance(data, str):
+                        data = bytes(data).decode("utf-8")
+                    receive_data_buffer += data
                     while receive_data_buffer:
                         try:
                             result, index = decoder.raw_decode(receive_data_buffer)
@@ -362,7 +400,7 @@ class NaxApi:
         return paths
 
     def __get_value_by_json_path(
-        self, json_obj, path, path_separator: chr = "."
+        self, json_obj, path, path_separator: str = "."
     ) -> Any | None:
         parts = path.split(path_separator)
         for part in parts:
@@ -402,7 +440,7 @@ class NaxApi:
 
         """
         async with self._put_data_lock:
-            if self.get_websocket_connected():
+            if self.get_websocket_connected() and self._ws_client is not None:
                 await self._ws_client.send(json.dumps(json_data))
                 await asyncio.sleep(0.01)  # allow the websocket to process the message
             else:
@@ -417,7 +455,8 @@ class NaxApi:
             The name of the device as a string, or None if the name is not available.
 
         """
-        return self.get_data("Device.DeviceInfo.Name")
+        value = self.get_data("Device.DeviceInfo.Name")
+        return str(value) if isinstance(value, str) else None
 
     def get_device_mac_address(self) -> str | None:
         """Get the MAC address of the device.
@@ -426,7 +465,8 @@ class NaxApi:
             The MAC address of the device as a string, or None if the MAC address is not available.
 
         """
-        return self.get_data("Device.DeviceInfo.MacAddress")
+        value = self.get_data("Device.DeviceInfo.MacAddress")
+        return str(value) if isinstance(value, str) else None
 
     def get_device_manufacturer(self) -> str | None:
         """Get the manufacturer of the device.
@@ -435,7 +475,8 @@ class NaxApi:
             The manufacturer of the device as a string, or None if the name is not available.
 
         """
-        return self.get_data("Device.DeviceInfo.Manufacturer")
+        value = self.get_data("Device.DeviceInfo.Manufacturer")
+        return str(value) if isinstance(value, str) else None
 
     def get_device_model(self) -> str | None:
         """Get the model of the device.
@@ -444,7 +485,8 @@ class NaxApi:
             The model of the device as a string, or None if the model is not available.
 
         """
-        return self.get_data("Device.DeviceInfo.Model")
+        value = self.get_data("Device.DeviceInfo.Model")
+        return str(value) if isinstance(value, str) else None
 
     def get_device_firmware_version(self) -> str | None:
         """Get the firmware version of the device.
@@ -453,7 +495,8 @@ class NaxApi:
             The firmware version of the device as a string, or None if the version is not available.
 
         """
-        return self.get_data("Device.DeviceInfo.DeviceVersion")
+        value = self.get_data("Device.DeviceInfo.DeviceVersion")
+        return str(value) if isinstance(value, str) else None
 
     def get_device_serial_number(self) -> str | None:
         """Get the serial number of the device.
@@ -462,10 +505,14 @@ class NaxApi:
             The serial number of the device as a string, or None if the serial number is not available.
 
         """
-        return self.get_data("Device.DeviceInfo.SerialNumber")
+        value = self.get_data("Device.DeviceInfo.SerialNumber")
+        return str(value) if isinstance(value, str) else None
 
-    def __get_zone_outputs(self) -> dict[str:Any] | None:
-        return self.get_data("Device.ZoneOutputs.Zones")
+    def __get_zone_outputs(self) -> dict[str, Any] | None:
+        data = self.get_data("Device.ZoneOutputs.Zones")
+        if isinstance(data, dict):
+            return data
+        return None
 
     def get_all_zone_outputs(self) -> list[str]:
         """Get a list of all zone outputs.
@@ -507,7 +554,7 @@ class NaxApi:
 
         """
         zone_routes = self.get_data("Device.AvMatrixRouting.Routes")
-        if zone_routes and zone_output in zone_routes:
+        if isinstance(zone_routes, dict) and zone_output in zone_routes:
             if "AudioSource" in zone_routes[zone_output]:
                 if zone_routes[zone_output]["AudioSource"] != "":
                     return zone_routes[zone_output]["AudioSource"]
@@ -521,7 +568,7 @@ class NaxApi:
 
         """
         streams = self.get_data("Device.NaxAudio.NaxSdp.NaxSdpStreams")
-        if not streams:
+        if not isinstance(streams, dict) or not streams:
             return None
         return [
             {
@@ -545,6 +592,8 @@ class NaxApi:
         rx_mappings = self.get_data(
             "Device.NaxAudio.StreamReferenceMapping.NaxRxStreams"
         )
+        if not isinstance(rx_mappings, dict):
+            return None
         for streamer in rx_mappings:
             if rx_mappings[streamer]["Path"] == f"ZoneOutputs/Zones/{zone_output}":
                 return streamer
@@ -561,6 +610,8 @@ class NaxApi:
 
         """
         tx_streams = self.get_data("Device.NaxAudio.NaxTx.NaxTxStreams")
+        if not isinstance(tx_streams, dict):
+            return False
         for stream in tx_streams.values():
             if stream["NetworkAddressStatus"] == address:
                 return True
@@ -577,10 +628,24 @@ class NaxApi:
 
         """
         naxAudio = self.get_data("Device.NaxAudio")
-        naxTxStreams = naxAudio["StreamReferenceMapping"]["NaxTxStreams"]
-        for stream in naxTxStreams:
-            if naxTxStreams[stream]["Path"] == f"InputSources/Inputs/{input}":
-                return naxAudio["NaxTx"]["NaxTxStreams"][stream]["NetworkAddressStatus"]
+        if (
+            isinstance(naxAudio, dict)
+            and isinstance(naxAudio.get("StreamReferenceMapping"), dict)
+            and isinstance(naxAudio["StreamReferenceMapping"].get("NaxTxStreams"), dict)
+        ):
+            naxTxStreams = naxAudio["StreamReferenceMapping"]["NaxTxStreams"]
+            for stream in naxTxStreams:
+                if naxTxStreams[stream].get("Path") == f"InputSources/Inputs/{input}":
+                    if (
+                        isinstance(naxAudio.get("NaxTx"), dict)
+                        and isinstance(naxAudio["NaxTx"].get("NaxTxStreams"), dict)
+                        and isinstance(
+                            naxAudio["NaxTx"]["NaxTxStreams"].get(stream), dict
+                        )
+                    ):
+                        return naxAudio["NaxTx"]["NaxTxStreams"][stream].get(
+                            "NetworkAddressStatus"
+                        )
         return None
 
     def get_nax_rx_stream_address(self, streamer: str) -> str | None:
@@ -594,7 +659,9 @@ class NaxApi:
 
         """
         stream = self.get_data(f"Device.NaxAudio.NaxRx.NaxRxStreams.{streamer}")
-        return stream["NetworkAddressStatus"]
+        if isinstance(stream, dict) and "NetworkAddressStatus" in stream:
+            return stream["NetworkAddressStatus"]
+        return None
 
     async def set_nax_rx_stream(self, streamer: str, address: str) -> None:
         """Set the network address for a specific NaxRx streamer.
@@ -608,7 +675,7 @@ class NaxApi:
 
         """
         _LOGGER.error(
-            f"{self._ip}: NAX RX Stream Set for Streamer: {streamer} to: {address}"
+            f"{self._ip}: NAX RX Stream Set for Streamer: {streamer} to: {address}"  # noqa: G004
         )
         json_data = {
             "Device": {
@@ -815,7 +882,7 @@ class NaxApi:
 
         """
         inputs = self.get_data("Device.InputSources.Inputs")
-        if inputs:
+        if isinstance(inputs, dict):
             return list(inputs.keys())
         return None
 
@@ -830,7 +897,8 @@ class NaxApi:
 
         """
         if input_source:
-            return self.get_data(f"Device.InputSources.Inputs.{input_source}.Name")
+            value = self.get_data(f"Device.InputSources.Inputs.{input_source}.Name")
+            return str(value) if isinstance(value, str) else None
         return None
 
     def get_input_source_signal_present(self, input_source: str) -> bool | None:
@@ -844,9 +912,10 @@ class NaxApi:
 
         """
         if input_source:
-            return self.get_data(
+            value = self.get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsSignalPresent"
             )
+            return bool(value) if isinstance(value, bool) else None
         return None
 
     def get_input_source_clipping(self, input_source: str) -> bool | None:
@@ -860,9 +929,10 @@ class NaxApi:
 
         """
         if input_source:
-            return self.get_data(
+            value = self.get_data(
                 f"Device.InputSources.Inputs.{input_source}.IsClippingDetected"
             )
+            return value if isinstance(value, bool) else None
         return None
 
     def get_zone_tone_profile(self, zone_output: str) -> str | None:
@@ -875,9 +945,10 @@ class NaxApi:
             The tone profile of the specified zone output as a string, or None if the tone profile is not available.
 
         """
-        return self.get_data(
+        value = self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.ToneProfile"
         )
+        return str(value) if isinstance(value, str) else None
 
     def get_zone_test_tone(self, zone_output: str) -> bool | None:
         """Get the test tone status of a specific zone output.
@@ -889,9 +960,10 @@ class NaxApi:
             The test tone status of the specified zone output as a boolean, or None if the status is not available.
 
         """
-        return self.get_data(
+        value = self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsTestToneActive"
         )
+        return value if isinstance(value, bool) else None
 
     def get_zone_night_modes(self) -> list[str] | None:
         """Get the available night modes for a zone output.
@@ -912,9 +984,10 @@ class NaxApi:
             The night mode of the specified zone output as a string, or None if the night mode is not available.
 
         """
-        return self.get_data(
+        value = self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.NightMode"
         )
+        return str(value) if isinstance(value, str) else None
 
     async def set_zone_night_mode(self, zone_output: str, mode: str) -> None:
         """Set the night mode of a specific zone output.
@@ -927,7 +1000,8 @@ class NaxApi:
             ValueError: If an invalid night mode is provided.
 
         """
-        if mode not in self.get_zone_night_modes():
+        night_modes = self.get_zone_night_modes()
+        if not night_modes or mode not in night_modes:
             raise ValueError(f"Invalid Night Mode '{mode}'")
         json_data = {
             "Device": {
@@ -957,9 +1031,10 @@ class NaxApi:
             The loudness status of the specified zone output as a boolean, or None if the status is not available.
 
         """
-        return self.get_data(
+        value = self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsLoudnessEnabled"
         )
+        return value if isinstance(value, bool) else None
 
     def get_zone_amplification_supported(self, zone_output: str) -> bool | None:
         """Check if amplification is supported for a specific zone output.
@@ -977,7 +1052,9 @@ class NaxApi:
         amplification = self.get_data(
             f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
         )
-        return speaker is not None and amplification
+        if speaker is not None and isinstance(amplification, bool):
+            return amplification
+        return None
 
     async def set_zone_loudness(self, zone_output: str, active: bool) -> None:
         """Set the loudness status of a specific zone output.
@@ -1014,8 +1091,9 @@ class NaxApi:
         """
         result = []
         chimes = self.get_data("Device.DoorChimes.DefaultChimes")
-        for chime in chimes:
-            result.append({"id": chime, "name": chimes[chime]["Name"]})  # noqa: PERF401
+        if isinstance(chimes, dict):
+            for chime in chimes:
+                result.append({"id": chime, "name": chimes[chime]["Name"]})  # noqa: PERF401
         return result
 
     async def play_chime(self, chime_id: str) -> None:

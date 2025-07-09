@@ -1,7 +1,7 @@
 {
     "domain": "nax",
     "name": "NAX",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "integration_type": "device",
     "config_flow": true,
     "documentation": "https://www.crestron.com/Products/Featured-Solutions/Audio-Over-IP",

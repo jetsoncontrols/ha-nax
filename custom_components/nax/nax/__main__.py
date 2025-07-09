@@ -10,7 +10,7 @@ async def test(api: NaxApi):
     if connected:
         print(json.dumps(naxApi.get_data(data_path="Device"), indent=2))
 
-        await naxApi._ws_task.
+        # await naxApi._ws_task.
         # print(json.dumps(naxApi.get_data(data_path="Device.MediaNavigation"), indent=2))
         # print(json.dumps(naxApi.get_data(data_path="Device.NaxAudio"), indent=2))
 
