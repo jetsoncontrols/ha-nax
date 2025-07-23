@@ -231,23 +231,36 @@ class NaxApi:
         }
 
         try:
-            ws_url = self.__get_websocket_url()
-            if ws_url is None:
-                _LOGGER.error("WebSocket URL is None, cannot connect")
-                return False, "WebSocket URL is None"
-            client = await websockets.connect(
-                ws_url,
-                ssl=ssl_context,
-                ping_interval=1.0,
-                additional_headers=headers,
-                extensions=[
-                    permessage_deflate.ClientPerMessageDeflateFactory(
-                        server_max_window_bits=11,
-                        client_max_window_bits=11,
-                        compress_settings={"memLevel": 4},
-                    ),
-                ],
-            )
+            # Try with additional_headers first (newer websockets versions)
+            try:
+                client: WebSocketClientProtocol = await websockets.connect(
+                    self.__get_websocket_url(),
+                    ssl=ssl_context,
+                    ping_interval=1.0,
+                    additional_headers=headers,
+                    extensions=[
+                        permessage_deflate.ClientPerMessageDeflateFactory(
+                            server_max_window_bits=11,
+                            client_max_window_bits=11,
+                            compress_settings={"memLevel": 4},
+                        ),
+                    ],
+                )
+            except TypeError:
+                # Fall back to extra_headers for older websockets versions
+                client: WebSocketClientProtocol = await websockets.connect(
+                    self.__get_websocket_url(),
+                    ssl=ssl_context,
+                    ping_interval=1.0,
+                    extra_headers=headers,
+                    extensions=[
+                        permessage_deflate.ClientPerMessageDeflateFactory(
+                            server_max_window_bits=11,
+                            client_max_window_bits=11,
+                            compress_settings={"memLevel": 4},
+                        ),
+                    ],
+                )
             self._ws_client = client
             self._ws_client_connected = True
             _LOGGER.info("Connected to websocket")
