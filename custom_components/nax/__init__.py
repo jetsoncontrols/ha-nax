@@ -57,7 +57,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await store.async_save(storage_data)
     entry.runtime_data = store
 
-    def on_zones_data_update(path: str, data: any) -> None:
+    def on_zones_data_update(path: str, data: Any) -> None:
+        # add debug logging for data updates and what this device is called
+        _LOGGER.error("Data update for %s", entry.title or entry.entry_id)
         asyncio.get_event_loop().create_task(
             hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         )
@@ -83,9 +85,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-async def async_remove_entry(hass, entry) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of an entry."""
-    print("async_remove_entry")
+    _LOGGER.debug("Removing NAX config entry %s", entry.entry_id)
 
 
 class NaxEntity(Entity):
@@ -97,21 +99,28 @@ class NaxEntity(Entity):
         self._attr_should_poll = False
         self._attr_entity_registry_visible_default = False
         self.api = api
-        self._attr_device_info = DeviceInfo(
+        raw_mac = self.api.get_device_mac_address()
+        formatted_mac = dr.format_mac(raw_mac) if raw_mac else None
+
+        connections: set[tuple[str, str]] = (
+            {(dr.CONNECTION_NETWORK_MAC, formatted_mac)} if formatted_mac else set()
+        )
+
+        # Use a stable identifier (serial if available, else unique_id)
+        stable_identifier = self.api.get_device_serial_number() or self._attr_unique_id
+
+        device_info = DeviceInfo(
             configuration_url=self.api.get_base_url(),
-            connections={
-                (
-                    dr.CONNECTION_NETWORK_MAC,
-                    self.api.get_device_mac_address(),
-                )
-            },
-            # identifiers={(DOMAIN, self._attr_unique_id)},
+            connections=connections,
+            identifiers={(DOMAIN, stable_identifier)},
             serial_number=self.api.get_device_serial_number(),
             manufacturer=self.api.get_device_manufacturer(),
             model=self.api.get_device_model(),
             sw_version=self.api.get_device_firmware_version(),
             name=self.api.get_device_name(),
         )
+        self._attr_device_info = device_info
+        self._cached_mac = formatted_mac
         self.__base_subscriptions()
 
     def __base_subscriptions(self) -> None:
@@ -120,11 +129,32 @@ class NaxEntity(Entity):
             "Device.DeviceInfo.Name",
             self._device_name_update,
         )
+        # Subscribe to MAC updates if the device reports them dynamically
+        self.api.subscribe_data_updates(
+            "Device.DeviceInfo.MAC",
+            self._device_mac_update,
+        )
 
     @callback
     def _device_name_update(self, path: str, data: Any) -> None:
-        self._attr_device_info["name"] = data
-        self.schedule_update_ha_state(force_refresh=False)
+        if self._attr_device_info:
+            self._attr_device_info["name"] = data
+            self.schedule_update_ha_state(force_refresh=False)
+
+    @callback
+    def _device_mac_update(self, path: str, data: Any) -> None:
+        """Handle MAC address updates and refresh device connections."""
+        if not data:
+            return
+        new_mac = dr.format_mac(data)
+        if new_mac == self._cached_mac:
+            return
+        self._cached_mac = new_mac
+        if self._attr_device_info:
+            self._attr_device_info["connections"] = {
+                (dr.CONNECTION_NETWORK_MAC, new_mac)
+            }
+            self.schedule_update_ha_state(force_refresh=False)
 
     @callback
     def _generic_update(self, path: str, data: Any) -> None:

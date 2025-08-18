@@ -1,5 +1,9 @@
 """Module for Nax button entities."""
 
+from __future__ import annotations
+
+import logging
+
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -9,6 +13,8 @@ from . import NaxEntity
 from .const import DOMAIN
 from .nax.nax_api import NaxApi
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -16,20 +22,28 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Nax button entities from a config entry."""
+    _LOGGER.debug("Setting up Nax button entities for %s", config_entry.entry_id)
     entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = api.get_device_mac_address()
 
     chimes = await hass.async_add_executor_job(api.get_chimes)
-    if chimes:
+    if not chimes:
+        _LOGGER.debug(
+            "No chimes returned for NAX device %s; skipping chime button entities",
+            mac_address,
+        )
+    else:
         entities_to_add.extend(
-            NaxChimePlayButton(
-                api=api,
-                unique_id=f"{mac_address}_{chime['id']}_play_chime_button",
-                chime_id=chime["id"],
-                chime_name=chime["name"],
-            )
-            for chime in chimes
+            [
+                NaxChimePlayButton(
+                    api=api,
+                    unique_id=f"{mac_address}_{chime['id']}_play_chime_button",
+                    chime_id=chime["id"],
+                    chime_name=chime["name"],
+                )
+                for chime in chimes
+            ]
         )
     async_add_entities(entities_to_add)
 

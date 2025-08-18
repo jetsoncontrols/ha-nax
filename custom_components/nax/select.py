@@ -1,8 +1,8 @@
 """Module containing the Nax select entities for Home Assistant."""
 
 import asyncio
+import logging
 import socket
-from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -11,8 +11,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
 from . import NaxEntity
-from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
+from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY
 from .nax.nax_api import NaxApi
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -21,28 +23,35 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Nax select entities from a config entry."""
+    _LOGGER.debug("Setting up NAX select entities for %s", config_entry.entry_id)
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
     store = config_entry.runtime_data
 
     entities_to_add = []
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
-    for zone in zones:
-        entities_to_add.append(
-            NaxZoneNightModeSelect(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_night_mode",
-                zone_output=zone,
-            )
+    if not zones:
+        _LOGGER.debug(
+            "No zone outputs returned for NAX device %s; skipping select entities",
+            mac_address,
         )
-        entities_to_add.append(
-            NaxZoneAes67StreamSelect(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_aes67_stream",
-                zone_output=zone,
-                store=store,
+    else:
+        for zone in zones:
+            entities_to_add.append(
+                NaxZoneNightModeSelect(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_night_mode",
+                    zone_output=zone,
+                )
             )
-        )
+            entities_to_add.append(
+                NaxZoneAes67StreamSelect(
+                    api=api,
+                    unique_id=f"{mac_address}_{zone}_aes67_stream",
+                    zone_output=zone,
+                    store=store,
+                )
+            )
     async_add_entities(entities_to_add)
 
 
@@ -58,7 +67,7 @@ class NaxBaseSelect(NaxEntity, SelectEntity):
 class NaxZoneNightModeSelect(NaxBaseSelect):
     """Representation of a Nax Zone Night Mode Select entity."""
 
-    def __init__(self, api: NaxApi, unique_id: str, zone_output: int) -> None:
+    def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
         """Initialize the select."""
         super().__init__(api, unique_id)
         self.zone_output = zone_output
@@ -88,7 +97,7 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
     @property
     def options(self) -> list[str]:
         """Return the list of available options."""
-        return self.api.get_zone_night_modes()
+        return self.api.get_zone_night_modes() or []
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
@@ -99,7 +108,7 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
     """Representation of a Nax Zone Aes67 Stream Select entity."""
 
     def __init__(
-        self, api: NaxApi, unique_id: str, zone_output: int, store: Store
+        self, api: NaxApi, unique_id: str, zone_output: str, store: Store
     ) -> None:
         """Initialize the select."""
         super().__init__(api, unique_id)
@@ -114,17 +123,13 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         self.__subscriptions()
 
     async def async_save_store_last_aes67_stream(self, last_aes67_stream: str) -> None:
-        """Save the store data asynchronously."""
+        """Save the last AES67 stream address in storage if it changed."""
         storage_data = await self.store.async_load()
-        if (
-            storage_data.setdefault(STORAGE_LAST_AES67_STREAM_KEY, {}).get(
-                self.zone_output
-            )
-            != last_aes67_stream
-        ):
-            storage_data[STORAGE_LAST_AES67_STREAM_KEY][self.zone_output] = (
-                last_aes67_stream
-            )
+        if storage_data is None:
+            storage_data = {}
+        stream_dict = storage_data.setdefault(STORAGE_LAST_AES67_STREAM_KEY, {})
+        if stream_dict.get(self.zone_output) != last_aes67_stream:
+            stream_dict[self.zone_output] = last_aes67_stream
             await self.store.async_save(storage_data)
 
     def __subscriptions(self) -> None:
@@ -152,10 +157,12 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         zone_streamer = self.api.get_stream_zone_receiver_mapping(
             zone_output=self.zone_output
         )
+        if not zone_streamer:
+            return None
         streamer_address = self.api.get_nax_rx_stream_address(streamer=zone_streamer)
         streams = self.api.get_aes67_streams() or []
         streams.append({"name": "None", "address": "0.0.0.0"})
-        matching_stream = None
+        matching_stream: dict[str, str] | None = None
         for stream in streams:
             if stream["address"] == streamer_address:
                 matching_stream = stream
@@ -164,14 +171,16 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
                         self.async_save_store_last_aes67_stream(stream["address"])
                     )
                 break
-        if streamer_address:
+        if streamer_address and matching_stream:
             return self.__mux_stream_name(matching_stream)
+        if streamer_address == "0.0.0.0":
+            return self.__mux_stream_name({"name": "None", "address": "0.0.0.0"})
         return None
 
     @property
     def options(self) -> list[str]:
         """Return the list of available options."""
-        streams = ( self.api.get_aes67_streams() or [] )
+        streams = self.api.get_aes67_streams() or []
         streams.append({"name": "None", "address": "0.0.0.0"})
         return [
             self.__mux_stream_name(stream)
@@ -186,16 +195,18 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
         zone_streamer = self.api.get_stream_zone_receiver_mapping(
             zone_output=self.zone_output
         )
+        if not zone_streamer:
+            return
         await self.api.set_nax_rx_stream(
             streamer=zone_streamer, address=self.__demux_stream_name(option)
         )
 
-    def __mux_stream_name(self, stream_arg: dict) -> str:
+    def __mux_stream_name(self, stream_arg: dict[str, str] | None) -> str:
         if not stream_arg:
             return ""
         return f"{stream_arg['name']} ({stream_arg['address']})"
 
-    def __demux_stream_name(self, stream_arg: str) -> dict:
+    def __demux_stream_name(self, stream_arg: str) -> str:
         if not stream_arg:
             return ""
         return stream_arg.split(" (", 1)[1][:-1]

@@ -1,6 +1,8 @@
-"""Module-level docstring describing the purpose of the module."""
+"""NAX sensors for signal, clipping, casting, and fault status."""
 
-from typing import Any
+from __future__ import annotations
+
+import logging
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -12,101 +14,121 @@ from .const import DOMAIN
 from .nax.nax_api import NaxApi
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Set up NAX sensor entities for a config entry."""
     entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
 
     sources = api.get_input_sources()
-    for source in sources:
-        entities_to_add.append(
-            NaxSourceSignalSensor(
-                api=api,
-                unique_id=f"{mac_address}_{source}_signal_present",
-                input_id=source,
-            )
+    if not sources:
+        _LOGGER.debug(
+            "No input sources returned for NAX device %s; skipping source sensors",
+            mac_address,
         )
-        entities_to_add.append(
-            NaxSourceClippingSensor(
-                api=api, unique_id=f"{mac_address}_{source}_clipping", input_id=source
+    else:
+        for source in sources:
+            entities_to_add.append(
+                NaxSourceSignalSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{source}_signal_present",
+                    input_id=source,
+                )
             )
-        )
+            entities_to_add.append(
+                NaxSourceClippingSensor(
+                    api=api,
+                    unique_id=f"{mac_address}_{source}_clipping",
+                    input_id=source,
+                )
+            )
 
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
-    for zone in zones:
-        entities_to_add.append(
-            NaxZoneSignalSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_signal_present",
-                zone_output=zone,
-            )
+    if not zones:
+        _LOGGER.debug(
+            "No zone outputs returned for NAX device %s; skipping zone sensors",
+            mac_address,
         )
-        entities_to_add.append(
-            NaxZoneSignalClippingSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_signal_clipping",
-                zone_output=zone,
-            )
-        )
-        entities_to_add.append(
-            NaxZoneCastingActiveSensor(
-                api=api,
-                unique_id=f"{mac_address}_{zone}_casting_active",
-                zone_output=zone,
-            )
-        )
-        if api.get_zone_amplification_supported(zone):  # Fix
+    else:
+        for zone in zones:
             entities_to_add.append(
-                NaxZoneSpeakerClippingSensor(
+                NaxZoneSignalSensor(
                     api=api,
-                    unique_id=f"{mac_address}_{zone}_speaker_clipping",
+                    unique_id=f"{mac_address}_{zone}_signal_present",
                     zone_output=zone,
                 )
             )
             entities_to_add.append(
-                NaxZoneCriticalFaultSensor(
+                NaxZoneSignalClippingSensor(
                     api=api,
-                    unique_id=f"{mac_address}_{zone}_critical_fault",
+                    unique_id=f"{mac_address}_{zone}_signal_clipping",
                     zone_output=zone,
                 )
             )
-            entities_to_add.append(  # Fix
-                NaxZoneDCFaultSensor(
+            entities_to_add.append(
+                NaxZoneCastingActiveSensor(
                     api=api,
-                    unique_id=f"{mac_address}_{zone}_dc_fault",
+                    unique_id=f"{mac_address}_{zone}_casting_active",
                     zone_output=zone,
                 )
             )
-            entities_to_add.append(  # Fix
-                NaxZoneOverCurrentSensor(
-                    api=api,
-                    unique_id=f"{mac_address}_{zone}_over_current",
-                    zone_output=zone,
+            if api.get_zone_amplification_supported(zone):  # Fix
+                entities_to_add.append(
+                    NaxZoneSpeakerClippingSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_speaker_clipping",
+                        zone_output=zone,
+                    )
                 )
-            )
-            entities_to_add.append(  # Fix
-                NaxZoneOverTemperatureSensor(
-                    api=api,
-                    unique_id=f"{mac_address}_{zone}_over_temperature",
-                    zone_output=zone,
+                entities_to_add.append(
+                    NaxZoneCriticalFaultSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_critical_fault",
+                        zone_output=zone,
+                    )
                 )
-            )
-            entities_to_add.append(  # Fix
-                NaxZoneVoltageFaultSensor(
-                    api=api,
-                    unique_id=f"{mac_address}_{zone}_voltage_fault",
-                    zone_output=zone,
+                entities_to_add.append(  # Fix
+                    NaxZoneDCFaultSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_dc_fault",
+                        zone_output=zone,
+                    )
                 )
-            )
+                entities_to_add.append(  # Fix
+                    NaxZoneOverCurrentSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_over_current",
+                        zone_output=zone,
+                    )
+                )
+                entities_to_add.append(  # Fix
+                    NaxZoneOverTemperatureSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_over_temperature",
+                        zone_output=zone,
+                    )
+                )
+                entities_to_add.append(  # Fix
+                    NaxZoneVoltageFaultSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_voltage_fault",
+                        zone_output=zone,
+                    )
+                )
 
     async_add_entities(entities_to_add)
 
 
 class NaxBaseSensor(NaxEntity, SensorEntity):
+    """Base class for NAX sensors providing shared initialization."""
+
     def __init__(self, api: NaxApi, unique_id: str) -> None:
         """Initialize the sensor."""
         super().__init__(api=api, unique_id=unique_id)

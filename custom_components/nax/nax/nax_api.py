@@ -376,6 +376,7 @@ class NaxApi:
             None
 
         """
+        # print("subscribe_data_updates begin", path)
         self._subscribe_data_lock.acquire()
         if path not in self._data_subscriptions:
             self._data_subscriptions[path] = []
@@ -385,6 +386,7 @@ class NaxApi:
             if matching_path_value is not None:
                 callback(path, matching_path_value)
         self._subscribe_data_lock.release()
+        # print("subscribe_data_updates end", path)
 
     def unsubscribe_data_updates(self, path: str, callback: Callable[[str, Any], None]):
         """Unsubscribe from data updates.
