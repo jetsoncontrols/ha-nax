@@ -31,7 +31,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Load NAX media players."""
-    _LOGGER.debug("Setting up NAX media player entities for %s", config_entry.entry_id)
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
     store = config_entry.runtime_data
@@ -90,6 +89,10 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
 
         self._load_store_task = None
         self._save_store_task = None
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     async def async_load_store_last_input(self) -> str | None:

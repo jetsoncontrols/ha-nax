@@ -284,7 +284,7 @@ class NaxApi:
             json_messages = []
             decoder = json.JSONDecoder()
 
-            await client.send("/Device/")  # Request all device data
+            # await client.send("/Device/")  # Request all device data
 
             while self._ws_task is not None and not self._ws_task.done():
                 try:
@@ -327,14 +327,25 @@ class NaxApi:
                             )
                 return
             nax_custom_merger.merge(self._json_state, json_message)
+            # Guard in case subscriptions dict is unexpectedly None
             new_message_paths = self.__get_json_paths(json_message)
             matching_paths = [
                 path for path in new_message_paths if path in self._data_subscriptions
             ]
             for path in matching_paths:
                 matching_path_value = self.__get_value_by_json_path(json_message, path)
-                for callback in self._data_subscriptions[path]:
-                    callback(path, matching_path_value)
+                callbacks = self._data_subscriptions.get(path)
+                if not callbacks:
+                    continue
+                # Iterate over a static copy to avoid modification during iteration
+                for callback in list(callbacks):
+                    try:
+                        # print(
+                        #     f"Calling subscriber for path: {path} with value: {matching_path_value}"
+                        # )  # noqa: G004
+                        callback(path, matching_path_value)
+                    except Exception:
+                        _LOGGER.exception("Subscriber callback raised an exception")
         except Exception:
             _LOGGER.exception("Error occurred while processing received json data")
 
@@ -414,10 +425,8 @@ class NaxApi:
                 self.__get_json_paths(value, new_path, paths)
         return paths
 
-    def __get_value_by_json_path(
-        self, json_obj, path, path_separator: str = "."
-    ) -> Any | None:
-        parts = path.split(path_separator)
+    def __get_value_by_json_path(self, json_obj, path) -> Any | None:
+        parts = path.split(".")
         for part in parts:
             if isinstance(json_obj, dict):
                 json_obj = json_obj.get(part, None)
@@ -439,8 +448,28 @@ class NaxApi:
         if json_state_data is not None:
             return json_state_data
         if self._http_fallback:
-            get_data = self.__get_request(path=f"/{data_path.replace('.', '/')}")
-            return self.__get_value_by_json_path(get_data, data_path)
+            response = self.__get_request(path=f"/{data_path.replace('.', '/')}")
+            # If we received a dict, treat it as a JSON message and merge
+            if isinstance(response, dict):
+                self.__process_received_json_message(response)
+                return self.__get_value_by_json_path(self._json_state, data_path)
+            # If we received a string, attempt to parse JSON and merge if dict
+            if isinstance(response, str):
+                try:
+                    parsed = json.loads(response)
+                except json.JSONDecodeError:
+                    # Not JSON; cannot merge into state. Return raw scalar if path empty.
+                    return response if data_path == "" else None
+                if isinstance(parsed, dict):
+                    self.__process_received_json_message(parsed)
+                    return self.__get_value_by_json_path(self._json_state, data_path)
+                # Parsed JSON but not a dict (scalar / list). Return directly only if exact path at root.
+                return parsed if data_path == "" else None
+            # For other scalar JSON types (int/float/bool/None) returned directly by httpx json()
+            if isinstance(response, (int, float, bool)) or response is None:
+                return response
+            # Unhandled type
+            return None
         return None
 
     async def put_data(self, data_path: str, json_data: Any) -> None:
@@ -525,6 +554,7 @@ class NaxApi:
 
     def __get_zone_outputs(self) -> dict[str, Any] | None:
         data = self.get_data("Device.ZoneOutputs.Zones")
+        # print(json.dumps(data, indent=4))
         if isinstance(data, dict):
             return data
         return None
@@ -555,6 +585,7 @@ class NaxApi:
         """
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
+            # print(json.dumps(zone_outputs_json[zone_output], indent=4))
             return zone_outputs_json[zone_output]["Name"]
         return None
 
@@ -689,9 +720,9 @@ class NaxApi:
             None
 
         """
-        _LOGGER.error(
-            f"{self._ip}: NAX RX Stream Set for Streamer: {streamer} to: {address}"  # noqa: G004
-        )
+        # _LOGGER.error(
+        #     f"{self._ip}: NAX RX Stream Set for Streamer: {streamer} to: {address}"  # noqa: G004
+        # )
         json_data = {
             "Device": {
                 "NaxAudio": {

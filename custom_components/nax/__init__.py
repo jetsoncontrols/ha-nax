@@ -43,7 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ip=entry.data[CONF_HOST],
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
-        http_fallback=False,
+        http_fallback=True,
     )
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
@@ -57,21 +57,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await store.async_save(storage_data)
     entry.runtime_data = store
 
-    def on_zones_data_update(path: str, data: Any) -> None:
-        # add debug logging for data updates and what this device is called
-        _LOGGER.error("Data update for %s", entry.title or entry.entry_id)
-        asyncio.get_event_loop().create_task(
-            hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        )
-        api.unsubscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
+    # def on_zones_data_update(path: str, data: Any) -> None:
+    #     # add debug logging for data updates and what this device is called
+    #     _LOGGER.error("Data update for %s", entry.title or entry.entry_id)
+    #     asyncio.get_event_loop().create_task(
+    #         hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    #     )
+    #     api.unsubscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
 
-    api.subscribe_data_updates(
-        "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=True
-    )
+    # api.subscribe_data_updates(
+    #     "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=True
+    # )
 
     connected, connect_message = await api.http_login()
     if connected:
         ws_connected, ws_message = await api.async_upgrade_websocket()
+        if not ws_connected:
+            _LOGGER.error("Websocket connection failed: %s", ws_message)
+            raise ConfigEntryNotReady(f"Could not connect to NAX: {ws_message}")
+        _LOGGER.warning("Setting up Nax entities for %s", entry.title)
+        asyncio.get_event_loop().create_task(
+            hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        )
         return ws_connected
     raise ConfigEntryNotReady(f"Could not connect to NAX: {connect_message}")
 
@@ -121,6 +128,9 @@ class NaxEntity(Entity):
         )
         self._attr_device_info = device_info
         self._cached_mac = formatted_mac
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
         self.__base_subscriptions()
 
     def __base_subscriptions(self) -> None:

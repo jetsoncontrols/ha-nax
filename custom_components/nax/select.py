@@ -23,7 +23,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Nax select entities from a config entry."""
-    _LOGGER.debug("Setting up NAX select entities for %s", config_entry.entry_id)
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
     store = config_entry.runtime_data
@@ -72,6 +71,10 @@ class NaxZoneNightModeSelect(NaxBaseSelect):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:weather-night"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -120,6 +123,10 @@ class NaxZoneAes67StreamSelect(NaxBaseSelect):
 
         self._load_store_task = None
         self._save_store_task = None
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     async def async_save_store_last_aes67_stream(self, last_aes67_stream: str) -> None:

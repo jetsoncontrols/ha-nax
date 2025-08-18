@@ -18,7 +18,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up NAX switch entities for a config entry."""
-    _LOGGER.debug("Setting up NAX switch entities for %s", config_entry.entry_id)
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
 
     mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
@@ -66,6 +65,10 @@ class NaxZoneTestToneSwitch(NaxBaseSwitch):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:square-wave"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -105,6 +108,10 @@ class NaxZoneLoudnessSwitch(NaxBaseSwitch):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:bullhorn-variant-outline"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:

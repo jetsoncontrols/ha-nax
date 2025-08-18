@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -79,7 +80,8 @@ async def async_setup_entry(
                     zone_output=zone,
                 )
             )
-            if api.get_zone_amplification_supported(zone):  # Fix
+            amplification_supported = api.get_zone_amplification_supported(zone)
+            if amplification_supported:
                 entities_to_add.append(
                     NaxZoneSpeakerClippingSensor(
                         api=api,
@@ -87,41 +89,41 @@ async def async_setup_entry(
                         zone_output=zone,
                     )
                 )
-                entities_to_add.append(
-                    NaxZoneCriticalFaultSensor(
-                        api=api,
-                        unique_id=f"{mac_address}_{zone}_critical_fault",
-                        zone_output=zone,
-                    )
-                )
-                entities_to_add.append(  # Fix
-                    NaxZoneDCFaultSensor(
-                        api=api,
-                        unique_id=f"{mac_address}_{zone}_dc_fault",
-                        zone_output=zone,
-                    )
-                )
-                entities_to_add.append(  # Fix
-                    NaxZoneOverCurrentSensor(
-                        api=api,
-                        unique_id=f"{mac_address}_{zone}_over_current",
-                        zone_output=zone,
-                    )
-                )
-                entities_to_add.append(  # Fix
-                    NaxZoneOverTemperatureSensor(
-                        api=api,
-                        unique_id=f"{mac_address}_{zone}_over_temperature",
-                        zone_output=zone,
-                    )
-                )
-                entities_to_add.append(  # Fix
-                    NaxZoneVoltageFaultSensor(
-                        api=api,
-                        unique_id=f"{mac_address}_{zone}_voltage_fault",
-                        zone_output=zone,
-                    )
-                )
+                # entities_to_add.append(
+                #     NaxZoneCriticalFaultSensor(
+                #         api=api,
+                #         unique_id=f"{mac_address}_{zone}_critical_fault",
+                #         zone_output=zone,
+                #     )
+                # )
+                # entities_to_add.append(  # Fix
+                #     NaxZoneDCFaultSensor(
+                #         api=api,
+                #         unique_id=f"{mac_address}_{zone}_dc_fault",
+                #         zone_output=zone,
+                #     )
+                # )
+                # entities_to_add.append(  # Fix
+                #     NaxZoneOverCurrentSensor(
+                #         api=api,
+                #         unique_id=f"{mac_address}_{zone}_over_current",
+                #         zone_output=zone,
+                #     )
+                # )
+                # entities_to_add.append(  # Fix
+                #     NaxZoneOverTemperatureSensor(
+                #         api=api,
+                #         unique_id=f"{mac_address}_{zone}_over_temperature",
+                #         zone_output=zone,
+                #     )
+                # )
+                # entities_to_add.append(  # Fix
+                #     NaxZoneVoltageFaultSensor(
+                #         api=api,
+                #         unique_id=f"{mac_address}_{zone}_voltage_fault",
+                #         zone_output=zone,
+                #     )
+                # )
 
     async_add_entities(entities_to_add)
 
@@ -143,6 +145,10 @@ class NaxZoneCastingActiveSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:cast-audio"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -174,6 +180,10 @@ class NaxSourceSignalSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.input_id = input_id
         self._attr_icon = "mdi:waveform"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -205,6 +215,10 @@ class NaxSourceClippingSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.input_id = input_id
         self._attr_icon = "mdi:square-wave"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -236,6 +250,10 @@ class NaxZoneSignalSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:waveform"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -267,6 +285,10 @@ class NaxZoneSignalClippingSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:square-wave"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -298,6 +320,10 @@ class NaxZoneSpeakerClippingSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:square-wave"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -329,6 +355,10 @@ class NaxZoneCriticalFaultSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:exclamation"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -360,6 +390,10 @@ class NaxZoneDCFaultSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:current-dc"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -391,6 +425,10 @@ class NaxZoneOverCurrentSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:debug-step-over"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -422,6 +460,10 @@ class NaxZoneOverTemperatureSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:fire"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:
@@ -453,6 +495,10 @@ class NaxZoneVoltageFaultSensor(NaxBaseSensor):
         super().__init__(api, unique_id)
         self.zone_output = zone_output
         self._attr_icon = "mdi:flash-triangle"
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to Home Assistant."""
+        await super().async_added_to_hass()  # type: ignore[misc]
         self.__subscriptions()
 
     def __subscriptions(self) -> None:

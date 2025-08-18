@@ -22,7 +22,6 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Nax button entities from a config entry."""
-    _LOGGER.debug("Setting up Nax button entities for %s", config_entry.entry_id)
     entities_to_add = []
     api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
     mac_address = api.get_device_mac_address()
