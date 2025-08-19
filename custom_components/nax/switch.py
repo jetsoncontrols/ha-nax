@@ -25,7 +25,7 @@ async def async_setup_entry(
     entities_to_add = []
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
     if not zones:
-        _LOGGER.debug(
+        _LOGGER.error(
             "No zone outputs returned for NAX device %s; skipping switch entities",
             mac_address,
         )

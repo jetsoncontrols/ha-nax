@@ -53,7 +53,7 @@ async def async_setup_entry(
 
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
     if not zones:
-        _LOGGER.debug(
+        _LOGGER.error(
             "No zone outputs returned for NAX device %s; skipping zone sensors",
             mac_address,
         )
@@ -89,41 +89,41 @@ async def async_setup_entry(
                         zone_output=zone,
                     )
                 )
-                # entities_to_add.append(
-                #     NaxZoneCriticalFaultSensor(
-                #         api=api,
-                #         unique_id=f"{mac_address}_{zone}_critical_fault",
-                #         zone_output=zone,
-                #     )
-                # )
-                # entities_to_add.append(  # Fix
-                #     NaxZoneDCFaultSensor(
-                #         api=api,
-                #         unique_id=f"{mac_address}_{zone}_dc_fault",
-                #         zone_output=zone,
-                #     )
-                # )
-                # entities_to_add.append(  # Fix
-                #     NaxZoneOverCurrentSensor(
-                #         api=api,
-                #         unique_id=f"{mac_address}_{zone}_over_current",
-                #         zone_output=zone,
-                #     )
-                # )
-                # entities_to_add.append(  # Fix
-                #     NaxZoneOverTemperatureSensor(
-                #         api=api,
-                #         unique_id=f"{mac_address}_{zone}_over_temperature",
-                #         zone_output=zone,
-                #     )
-                # )
-                # entities_to_add.append(  # Fix
-                #     NaxZoneVoltageFaultSensor(
-                #         api=api,
-                #         unique_id=f"{mac_address}_{zone}_voltage_fault",
-                #         zone_output=zone,
-                #     )
-                # )
+                entities_to_add.append(
+                    NaxZoneCriticalFaultSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_critical_fault",
+                        zone_output=zone,
+                    )
+                )
+                entities_to_add.append(
+                    NaxZoneDCFaultSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_dc_fault",
+                        zone_output=zone,
+                    )
+                )
+                entities_to_add.append(
+                    NaxZoneOverCurrentSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_over_current",
+                        zone_output=zone,
+                    )
+                )
+                entities_to_add.append(
+                    NaxZoneOverTemperatureSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_over_temperature",
+                        zone_output=zone,
+                    )
+                )
+                entities_to_add.append(
+                    NaxZoneVoltageFaultSensor(
+                        api=api,
+                        unique_id=f"{mac_address}_{zone}_voltage_fault",
+                        zone_output=zone,
+                    )
+                )
 
     async_add_entities(entities_to_add)
 

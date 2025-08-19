@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import socket
+import json
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
@@ -30,10 +31,11 @@ async def async_setup_entry(
     entities_to_add = []
     zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
     if not zones:
-        _LOGGER.debug(
+        _LOGGER.error(
             "No zone outputs returned for NAX device %s; skipping select entities",
             mac_address,
         )
+        print(json.dumps(api.get_data(data_path="Device.ZoneOutputs.Zones"), indent=2))
     else:
         for zone in zones:
             entities_to_add.append(

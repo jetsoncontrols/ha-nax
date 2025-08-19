@@ -33,7 +33,7 @@ class NaxApi:
         self._username = username
         self._password = password
         self._http_fallback = http_fallback
-        self._ws_client: websockets.legacy.client.ClientConnection | None = None  # type: ignore
+        self._ws_client: WebSocketClientProtocol | None = None
         self._ws_client_connected: bool = False
         self._ws_task: concurrent.futures.Future | None = None
         self._reconnect_task: asyncio.Task | None = None
@@ -312,6 +312,7 @@ class NaxApi:
                 while json_messages:
                     json_message = json_messages.pop(0)
                     self.__process_received_json_message(json_message)
+
         except (asyncio.CancelledError, RuntimeError):
             _LOGGER.debug("Websocket task cancelled")
 
@@ -340,9 +341,6 @@ class NaxApi:
                 # Iterate over a static copy to avoid modification during iteration
                 for callback in list(callbacks):
                     try:
-                        # print(
-                        #     f"Calling subscriber for path: {path} with value: {matching_path_value}"
-                        # )  # noqa: G004
                         callback(path, matching_path_value)
                     except Exception:
                         _LOGGER.exception("Subscriber callback raised an exception")
@@ -446,14 +444,18 @@ class NaxApi:
         """
         json_state_data = self.__get_value_by_json_path(self._json_state, data_path)
         if json_state_data is not None:
+            # print("CACHE HIT")
             return json_state_data
         if self._http_fallback:
+            # print("CACHE MISS, FALLBACK TO HTTP")
             response = self.__get_request(path=f"/{data_path.replace('.', '/')}")
-            # If we received a dict, treat it as a JSON message and merge
+            # print(json.dumps(response, indent=4))
+            # If we received a dict, treat it as a JSON message
             if isinstance(response, dict):
                 self.__process_received_json_message(response)
-                return self.__get_value_by_json_path(self._json_state, data_path)
-            # If we received a string, attempt to parse JSON and merge if dict
+                # print(json.dumps(response, indent=4))
+                return self.__get_value_by_json_path(response, data_path)
+            # If we received a string, attempt to parse JSON
             if isinstance(response, str):
                 try:
                     parsed = json.loads(response)
@@ -462,7 +464,7 @@ class NaxApi:
                     return response if data_path == "" else None
                 if isinstance(parsed, dict):
                     self.__process_received_json_message(parsed)
-                    return self.__get_value_by_json_path(self._json_state, data_path)
+                    return self.__get_value_by_json_path(parsed, data_path)
                 # Parsed JSON but not a dict (scalar / list). Return directly only if exact path at root.
                 return parsed if data_path == "" else None
             # For other scalar JSON types (int/float/bool/None) returned directly by httpx json()
@@ -491,6 +493,18 @@ class NaxApi:
                 await self.__post_request(
                     path=f"/{data_path.replace('.', '/')}", json_data=json_data
                 )
+
+    def get_device(self) -> dict[str, Any] | None:
+        """Get the device information.
+
+        Returns:
+            A dictionary containing device information, or None if the data is not available.
+
+        """
+        value = self.get_data("Device")
+        if isinstance(value, dict):
+            return value
+        return None
 
     def get_device_name(self) -> str | None:
         """Get the name of the device.
@@ -586,6 +600,13 @@ class NaxApi:
         zone_outputs_json = self.__get_zone_outputs()
         if zone_outputs_json is not None:
             # print(json.dumps(zone_outputs_json[zone_output], indent=4))
+            if (
+                zone_output not in zone_outputs_json
+                or "Name" not in zone_outputs_json[zone_output]
+            ):
+                print(
+                    f"Zone output {zone_output} not found in zone outputs JSON {zone_outputs_json}"
+                )
             return zone_outputs_json[zone_output]["Name"]
         return None
 
@@ -720,9 +741,6 @@ class NaxApi:
             None
 
         """
-        # _LOGGER.error(
-        #     f"{self._ip}: NAX RX Stream Set for Streamer: {streamer} to: {address}"  # noqa: G004
-        # )
         json_data = {
             "Device": {
                 "NaxAudio": {

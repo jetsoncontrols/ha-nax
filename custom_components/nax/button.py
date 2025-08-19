@@ -28,7 +28,7 @@ async def async_setup_entry(
 
     chimes = await hass.async_add_executor_job(api.get_chimes)
     if not chimes:
-        _LOGGER.debug(
+        _LOGGER.error(
             "No chimes returned for NAX device %s; skipping chime button entities",
             mac_address,
         )

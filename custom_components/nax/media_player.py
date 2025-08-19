@@ -37,7 +37,7 @@ async def async_setup_entry(
 
     zone_outputs = await hass.async_add_executor_job(api.get_all_zone_outputs)
     if not zone_outputs:
-        _LOGGER.debug(
+        _LOGGER.error(
             "No zone outputs returned for NAX device %s; skipping media player entities",
             mac_address,
         )
