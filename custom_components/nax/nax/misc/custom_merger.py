@@ -8,8 +8,8 @@ def merge_dict(config: Merger, path, base, nxt):
     for k, v in nxt.items():
         if k not in base:
             base[k] = v
-        if v is dict:
-            merge_dict(config, [*path, k], base[k], v)
+        # if v is dict:
+        #     merge_dict(config, [*path, k], base[k], v)
         else:
             base[k] = config.value_strategy([*path, k], base[k], v)
     return base

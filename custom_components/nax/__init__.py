@@ -4,6 +4,8 @@ import asyncio
 import logging
 from typing import Any
 
+from httpx import RemoteProtocolError
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -33,6 +35,14 @@ PLATFORMS = sorted(
         Platform.BUTTON,
         Platform.SELECT,
     ]
+)
+
+# Group retryable setup exceptions
+RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    RemoteProtocolError,
+    asyncio.TimeoutError,  # Prefer asyncio variant
+    OSError,
+    ConnectionError,
 )
 
 
@@ -103,11 +113,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         connected, connect_message = await api.http_login()
         if not connected:
-            _LOGGER.error("HTTP login failed: %s", connect_message)
+            _LOGGER.error("%s HTTP login failed: %s", entry.title, connect_message)
             _raise_not_ready(connect_message)
         ws_connected, ws_message = await api.async_upgrade_websocket()
         if not ws_connected:
-            _LOGGER.error("Websocket connection failed: %s", ws_message)
+            _LOGGER.error("%s Websocket connection failed: %s", entry.title, ws_message)
             _raise_not_ready(ws_message)
 
         # _LOGGER.warning("Setting up Nax entities for %s", entry.title)
@@ -122,7 +132,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # hass.loop.call_later(10, _delayed_get_zone_outputs)
 
-    except (TimeoutError, OSError, ConnectionError) as exc:
+    except RETRYABLE_EXCEPTIONS as exc:
         reason = str(exc)
         _LOGGER.error("Error setting up NAX: %s", reason)
         _raise_not_ready(reason)
