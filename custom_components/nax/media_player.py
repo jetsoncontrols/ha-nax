@@ -158,7 +158,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def state(self) -> MediaPlayerState | None:
         """Return the state of the device."""
-        if self.api.get_zone_audio_source(self.zone_output) is not None:
+        source = self.api.get_zone_audio_source(self.zone_output)
+        # print(f"Current source for {self.zone_output}: {source}")
+        if source is not None:
             return MediaPlayerState.PLAYING
         return MediaPlayerState.OFF
 

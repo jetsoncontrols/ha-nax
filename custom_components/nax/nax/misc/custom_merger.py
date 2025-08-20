@@ -2,9 +2,8 @@ from deepmerge import Merger
 
 
 def merge_dict(config: Merger, path, base, nxt):
-    # If the incoming dict is empty or None, treat as no-op instead of clearing existing data
     if not nxt:
-        return base  # was nxt
+        return nxt  # was nxt
     for k, v in nxt.items():
         if k not in base:
             base[k] = v

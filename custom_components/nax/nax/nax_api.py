@@ -336,12 +336,18 @@ class NaxApi:
                 path for path in new_message_paths if path in self._data_subscriptions
             ]
             for path in matching_paths:
-                matching_path_value = self.__get_value_by_json_path(json_message, path)
+                # matching_path_value = self.__get_value_by_json_path(json_message, path)
+                matching_path_value = self.__get_value_by_json_path(
+                    self._json_state, path
+                )
                 callbacks = self._data_subscriptions.get(path)
                 if not callbacks:
                     continue
                 # Iterate over a static copy to avoid modification during iteration
                 for callback in list(callbacks):
+                    # print(
+                    #     f"Calling subscriber for path: {path} with value: {matching_path_value}"
+                    # )
                     try:
                         callback(path, matching_path_value)
                     except Exception:
@@ -471,6 +477,9 @@ class NaxApi:
                 return parsed if data_path == "" else None
             # For other scalar JSON types (int/float/bool/None) returned directly by httpx json()
             if isinstance(response, (int, float, bool)) or response is None:
+                _LOGGER.error(
+                    "Received scalar response from HTTP request: %s", response
+                )
                 return response
             # Unhandled type
             return None
@@ -1112,15 +1121,18 @@ class NaxApi:
             A boolean indicating if amplification is supported for the specified zone output, or None if the information is not available.
 
         """
-        speaker = self.get_data(
-            f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.Speaker"
-        )
-        amplification = self.get_data(
-            f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
-        )
-        if speaker is not None and isinstance(amplification, bool):
-            return amplification
-        return None
+        return False
+        # model = self.get_data("Device.DeviceInfo.Model")
+        # print(f"Model: {model}")
+        # speaker = self.get_data(
+        #     f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.Speaker"
+        # )
+        # amplification = self.get_data(
+        #     f"Device.ZoneOutputs.Zones.{zone_output}.ZoneAudio.IsAmplificationSupported"
+        # )
+        # if speaker is not None and isinstance(amplification, bool):
+        #     return amplification
+        # return None
 
     async def set_zone_loudness(self, zone_output: str, active: bool) -> None:
         """Set the loudness status of a specific zone output.

@@ -68,15 +68,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = store
 
     def on_zones_data_update(path: str, data: Any) -> None:
-        # add debug logging for data updates and what this device is called
-        # _LOGGER.error("Data update for %s", entry.title or entry.entry_id)
-        asyncio.get_event_loop().create_task(
-            hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        )
+        def _forward_platforms_later() -> None:
+            asyncio.get_event_loop().create_task(
+                hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+            )
+
         api.unsubscribe_data_updates("Device.ZoneOutputs.Zones", on_zones_data_update)
+        hass.loop.call_later(1, _forward_platforms_later)
 
     api.subscribe_data_updates(
-        "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=True
+        "Device.ZoneOutputs.Zones", on_zones_data_update, trigger_current_value=False
     )
 
     # def on_connection_update(connected: bool) -> None:
@@ -136,8 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         reason = str(exc)
         _LOGGER.error("Error setting up NAX: %s", reason)
         _raise_not_ready(reason)
-    else:
-        return ws_connected
+    return ws_connected
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
