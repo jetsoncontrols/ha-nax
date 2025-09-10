@@ -138,13 +138,13 @@ class NaxApi:
                 if http_connect:
                     ws_connect, ws_msg = await self.async_upgrade_websocket()
                     if ws_connect:
-                        if self._ws_client is not None:
-                            await self._ws_client.send("/Device/")
+                        # if self._ws_client is not None:
+                        #     await self._ws_client.send("/Device/")
                         _LOGGER.debug("Reconnected to NAX")
                         return
                 if not http_connect or not ws_connect:
                     _LOGGER.error(
-                        f"Could not reconnect to NAX: HTTP: {http_msg}, WS: {ws_msg}"  # noqa: G004
+                        f"Could not reconnect to NAX: {self._ip} HTTP: {http_msg}, WS: {ws_msg}"  # noqa: G004
                     )
                     self._ws_client_connected = False
                     for callback in self._connection_subscriptions:
