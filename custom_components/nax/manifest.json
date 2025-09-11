@@ -1,11 +1,11 @@
 {
     "domain": "nax",
     "name": "NAX",
-    "version": "1.2.0",
+    "version": "2.0",
     "integration_type": "device",
     "config_flow": true,
     "documentation": "https://www.crestron.com/Products/Featured-Solutions/Audio-Over-IP",
-    "requirements": ["deepmerge", "websockets==15.0.1", "httpx"],
+    "requirements": [],
     "dependencies": [],
     "codeowners": ["@scottshanafelt"],
     "iot_class": "local_push"

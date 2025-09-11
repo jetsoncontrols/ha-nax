@@ -4,11 +4,11 @@ from typing import Any
 
 import voluptuous as vol
 
+from cresnextws import ClientConfig, CresNextWSClient
 from homeassistant import config_entries, exceptions
 import homeassistant.helpers.config_validation as cv
 
 from .const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, DOMAIN
-from .nax.nax_api import NaxApi
 
 DATA_SCHEMA = vol.Schema(
     {
@@ -32,11 +32,14 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors = self.check_for_user_input_errors(user_input)
             if errors:
                 raise exceptions.ConfigEntryError
-            connected, connect_message, api = await self.login(user_input)
+            connected, api = await self.login(user_input)
             if not connected:
-                errors["base"] = connect_message
+                errors["base"] = "cannot_connect"
             else:
-                device_name = api.get_device_name()
+                device_name_response = await api.http_get("/Device/DeviceInfo/Name")
+                device_name = device_name_response["content"]["Device"]["DeviceInfo"][
+                    "Name"
+                ]
                 return self.async_create_entry(title=device_name, data=user_input)
         return self.async_show_form(
             step_id="user", data_schema=DATA_SCHEMA, errors=errors
@@ -52,11 +55,14 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors = self.check_for_user_input_errors(user_input)
             if errors:
                 raise exceptions.ConfigEntryError
-            connected, connect_message, api = await self.login(user_input)
+            connected, api = await self.login(user_input)
             if not connected:
-                errors["base"] = connect_message
+                errors["base"] = "cannot_connect"
             else:
-                device_name = api.get_device_name()
+                device_name_response = await api.http_get("/Device/DeviceInfo/Name")
+                device_name = device_name_response["content"]["Device"]["DeviceInfo"][
+                    "Name"
+                ]
                 return self.async_update_reload_and_abort(
                     self.config_entry,
                     title=device_name,
@@ -79,13 +85,14 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "missing_data"
         return errors
 
-    async def login(self, user_input) -> tuple[bool, str, NaxApi]:
+    async def login(self, user_input) -> tuple[bool, CresNextWSClient]:
         """Login to the NAX API using the provided user input."""
-        api = NaxApi(
-            ip=user_input[CONF_HOST],
-            username=user_input[CONF_USERNAME],
-            password=user_input[CONF_PASSWORD],
-            http_fallback=True,
+        api = CresNextWSClient(
+            ClientConfig(
+                host=user_input[CONF_HOST],
+                username=user_input[CONF_USERNAME],
+                password=user_input[CONF_PASSWORD],
+            )
         )
-        connected, message = await api.http_login()
-        return connected, message, api
+        connected = await api.connect()
+        return connected, api
