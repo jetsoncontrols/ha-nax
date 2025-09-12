@@ -36,6 +36,7 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the user step of the config flow."""
         errors = {}
         if user_input is not None:
+            api = None
             try:
                 connected, api = await self.login(user_input)
                 if not connected:
@@ -51,6 +52,9 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_create_entry(title=device_name, data=user_input)
             except Exception:  # noqa: BLE001
                 errors["base"] = "unknown"
+            finally:
+                if api is not None:
+                    await api.disconnect()
         return self.async_show_form(
             step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
@@ -68,6 +72,7 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="entry_not_found")
         errors = {}
         if user_input is not None:
+            api = None
             try:
                 connected, api = await self.login(user_input)
                 if not connected:
@@ -88,6 +93,9 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
             except Exception:  # noqa: BLE001
                 errors["base"] = "unknown"
+            finally:
+                if api is not None:
+                    await api.disconnect()
 
         return self.async_show_form(
             step_id="reconfigure", data_schema=DATA_SCHEMA, errors=errors

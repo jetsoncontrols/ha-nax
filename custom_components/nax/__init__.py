@@ -64,15 +64,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload an config entry."""
+    _LOGGER.debug("Unloading NAX config entry %s", entry.entry_id)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        api = hass.data[DOMAIN].pop(entry.entry_id)
-        await api.disconnect()
+        api = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if api is not None:
+            await api.disconnect()
+        else:
+            _LOGGER.debug(
+                "No API client found for entry %s during unload", entry.entry_id
+            )
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of an entry."""
     _LOGGER.debug("Removing NAX config entry %s", entry.entry_id)
-    api = hass.data[DOMAIN].pop(entry.entry_id)
-    await api.disconnect()
+
+    # Safely get and remove the API client if it exists
+    api = hass.data[DOMAIN].pop(entry.entry_id, None)
+
+    if api is not None:
+        await api.disconnect()
+    else:
+        _LOGGER.debug("No API client found for entry %s during removal", entry.entry_id)
