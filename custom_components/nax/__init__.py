@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from cresnextws import ClientConfig, CresNextWSClient
+from cresnextws import ClientConfig, CresNextWSClient, DataEventManager
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -25,20 +25,21 @@ PLATFORMS = sorted(
     [
         # Platform.MEDIA_PLAYER,
         # Platform.SELECT,
+        Platform.SENSOR,
     ]
 )
 
 
-# https://github.com/home-assistant/example-custom-config/blob/master/custom_components/detailed_hello_world_push
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Load a config entry."""
-    api = CresNextWSClient(
+    client = CresNextWSClient(
         ClientConfig(
             host=entry.data[CONF_HOST],
             username=entry.data[CONF_USERNAME],
             password=entry.data[CONF_PASSWORD],
         )
     )
+    api = DataEventManager(client)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
 
     store = Store[dict[str, Any]](hass, STORAGE_VERSION, DOMAIN + "_" + entry.entry_id)
@@ -51,11 +52,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = store
 
     try:
-        if not await api.connect():
+        if not await api.client.connect():
             raise ConfigEntryNotReady("Could not connect to NAX")
     except Exception as err:
         raise ConfigEntryNotReady(f"Failed to connect to NAX: {err}") from err
-
+    await api.start_monitoring()
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info("Successfully set up NAX entities for %s", entry.title)
@@ -67,9 +68,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Unloading NAX config entry %s", entry.entry_id)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        api = hass.data[DOMAIN].pop(entry.entry_id, None)
+        api: DataEventManager = hass.data[DOMAIN].pop(entry.entry_id, None)
         if api is not None:
-            await api.disconnect()
+            await api.stop_monitoring()
+            await api.client.disconnect()
         else:
             _LOGGER.debug(
                 "No API client found for entry %s during unload", entry.entry_id
@@ -82,9 +84,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Removing NAX config entry %s", entry.entry_id)
 
     # Safely get and remove the API client if it exists
-    api = hass.data[DOMAIN].pop(entry.entry_id, None)
+    api: DataEventManager = hass.data[DOMAIN].pop(entry.entry_id, None)
 
     if api is not None:
-        await api.disconnect()
+        await api.stop_monitoring()
+        await api.client.disconnect()
     else:
         _LOGGER.debug("No API client found for entry %s during removal", entry.entry_id)
