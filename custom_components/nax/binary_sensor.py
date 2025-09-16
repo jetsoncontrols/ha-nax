@@ -60,6 +60,22 @@ async def async_setup_entry(
         .get("Model")
     )
 
+    nax_device_firmware_version = (
+        (await api.client.http_get("/Device/DeviceInfo/DeviceVersion") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("DeviceVersion")
+    )
+
+    nax_device_serial_number = (
+        (await api.client.http_get("/Device/DeviceInfo/SerialNumber") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("SerialNumber")
+    )
+
     source_inputs = (
         (await api.client.http_get("/Device/InputSources/Inputs") or {})
         .get("content", {})
@@ -79,6 +95,8 @@ async def async_setup_entry(
             nax_device_name=nax_device_name,
             nax_device_manufacturer=nax_device_manufacturer,
             nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
             source_input_key=source_input,
             source_input_data=source_inputs[source_input],
         )
@@ -98,6 +116,8 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         nax_device_name: str,
         nax_device_manufacturer: str,
         nax_device_model: str,
+        nax_device_firmware_version: str | None,
+        nax_device_serial_number: str | None,
         source_input_key: str,
         source_input_data: dict,
     ) -> None:
@@ -108,6 +128,8 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
             nax_device_name=nax_device_name,
             nax_device_manufacturer=nax_device_manufacturer,
             nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
         )
         self._source_input_key = source_input_key
         self._attr_unique_id = (
@@ -138,3 +160,13 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         """Handle updates to the input name."""
         self._attr_name = f"{message} Signal Present"
         self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent"
+        )
+        await self.api.client.ws_get(
+            f"/Device/InputSources/Inputs/{self._source_input_key}/Name"
+        )
