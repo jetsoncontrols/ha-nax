@@ -25,7 +25,7 @@ PLATFORMS = sorted(
     [
         # Platform.MEDIA_PLAYER,
         # Platform.SELECT,
-        Platform.SENSOR,
+        Platform.BINARY_SENSOR,
     ]
 )
 
@@ -40,6 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
     api = DataEventManager(client)
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
 
     store = Store[dict[str, Any]](hass, STORAGE_VERSION, DOMAIN + "_" + entry.entry_id)
