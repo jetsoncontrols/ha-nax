@@ -84,8 +84,18 @@ async def async_setup_entry(
         .get("Inputs", [])
     )
 
-    if not mac_address or not source_inputs:
-        _LOGGER.error("Could not retrieve NAX device MAC address or inputs")
+    if not all(
+        [
+            mac_address,
+            nax_device_name,
+            nax_device_manufacturer,
+            nax_device_model,
+            nax_device_firmware_version,
+            nax_device_serial_number,
+            source_inputs,
+        ]
+    ):
+        _LOGGER.error("Could not retrieve required NAX device information")
         raise ConfigEntryNotReady("NAX device not available")
 
     entities_to_add = [
@@ -116,8 +126,8 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         nax_device_name: str,
         nax_device_manufacturer: str,
         nax_device_model: str,
-        nax_device_firmware_version: str | None,
-        nax_device_serial_number: str | None,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
         source_input_key: str,
         source_input_data: dict,
     ) -> None:

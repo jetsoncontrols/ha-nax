@@ -22,8 +22,8 @@ class NaxEntity(Entity):
         nax_device_name: str,
         nax_device_manufacturer: str,
         nax_device_model: str,
-        nax_device_firmware_version: str | None = None,
-        nax_device_serial_number: str | None = None,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
     ) -> None:
         """Initialize the entity.
 
