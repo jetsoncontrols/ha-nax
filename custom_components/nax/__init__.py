@@ -23,7 +23,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = sorted(
     [
-        # Platform.MEDIA_PLAYER,
+        Platform.MEDIA_PLAYER,
         # Platform.SELECT,
         Platform.BINARY_SENSOR,
     ]
