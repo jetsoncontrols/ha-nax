@@ -146,10 +146,17 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
             f"{format_mac(mac_address)}_{source_input_key}_signal_present"
         )
         self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_signal_present"
-        self._attr_name = f"{source_input_data.get('Name')} Signal Present"
-        self._attr_is_on = source_input_data.get("IsSignalPresent")
         self._attr_icon = "mdi:waveform"
 
+        # Initialize media player attributes
+        self._is_signal_present_update(
+            event_name="", message=source_input_data.get("IsSignalPresent", False)
+        )
+        self._input_name_update(
+            event_name="", message=source_input_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
         api.subscribe(
             f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent",
             self._is_signal_present_update,
@@ -163,13 +170,15 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
     def _is_signal_present_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the signal presence."""
         self._attr_is_on = message
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()
 
     @callback
     def _input_name_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the input name."""
         self._attr_name = f"{message} Signal Present"
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()
 
     async def async_update(self) -> None:
         """Fetch new state data for this entity."""
