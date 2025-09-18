@@ -19,7 +19,6 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
@@ -192,6 +191,8 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         self.store = store
         self._load_store_task = None
         self._save_store_task = None
+        self._input_sources = input_sources_data
+        self._nax_tx = nax_tx_data
 
         self._attr_unique_id = f"{format_mac(mac_address)}_{zone_output_key.lower()}"
         self.entity_id = (
@@ -213,16 +214,10 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             | MediaPlayerEntityFeature.SELECT_SOUND_MODE
         )
 
-        # Store input data
-        self._input_sources = input_sources_data
-        self._nax_tx = nax_tx_data
-
         # Initialize media player attributes
         self._zone_name_update(event_name="", message=zone_output_data.get("Name", ""))
         self._zone_matrix_audiosource_update(event_name="", message=zone_matrix_data)
-        self._input_sources_update(
-            event_name="/Device/InputSources/Inputs", message=input_sources_data
-        )
+        self._input_sources_update(event_name="", message=None)  # None bypasses merge
 
         # Subscribe to relevant events
         api.subscribe(
@@ -232,10 +227,12 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         api.subscribe(
             "/Device/InputSources/Inputs",
             self._input_sources_update,
+            full_message=True,
         )
         api.subscribe(
             "/Device/NaxAudio/NaxTx",
             self._nax_tx_update,
+            full_message=True,
         )
         api.subscribe(
             f"/Device/AvMatrixRouting/Routes/{zone_output_key}",
@@ -265,7 +262,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
                 input_source_aes67_address=zone_audio_source_aes67_address,
             )
             self._save_store_task = asyncio.create_task(
-                self.async_save_store_last_input(zone_audio_source_key)
+                self.__async_save_store_last_input(zone_audio_source_key)
             )
         else:
             self._attr_state = MediaPlayerState.OFF
@@ -274,12 +271,13 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             self.async_write_ha_state()
 
     @callback
-    def _input_sources_update(self, event_name: str, message: Any) -> None:
+    def _input_sources_update(self, event_name: str, message: Any | None) -> None:
         """Handle updates to the input sources."""
-        print(
-            f"Input sources update name: {event_name} with message: {json.dumps(message, indent=2)}"
-        )
-        deepmerge.always_merger.merge(self._input_sources, message)
+        if message is not None:
+            deepmerge.always_merger.merge(
+                self._input_sources,
+                message.get("Device", {}).get("InputSources", {}).get("Inputs", {}),
+            )
         new_source_list = []
         for input_source in self._input_sources:
             input_source_name, input_source_aes67_address = (
@@ -293,23 +291,34 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
                 )
             )
         self._attr_source_list = new_source_list
-        print("Updated source list:", json.dumps(self._attr_source_list, indent=2))
         if self.hass is not None:
             self.async_write_ha_state()
 
     @callback
     def _nax_tx_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the NAX TX data."""
-        deepmerge.always_merger.merge(self._nax_tx, message)
+        if message is not None:
+            deepmerge.always_merger.merge(
+                self._nax_tx,
+                message.get("Device", {}).get("NaxAudio", {}).get("NaxTx", {}),
+            )
         if self.hass is not None:
             self.async_write_ha_state()
 
-    # @property
-    # def source_list(self) -> list[str] | None:
-    #     """List of available input sources."""
-
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
+        json_data = {
+            "Device": {
+                "AvMatrixRouting": {
+                    "Routes": {
+                        self._zone_output_key: {
+                            "AudioSource": self.__demux_source_name(source)
+                        },
+                    },
+                }
+            }
+        }
+        await self.api.client.ws_post(payload=json_data)
 
     async def async_turn_on(self) -> None:
         """Turn the media player on."""
@@ -352,6 +361,11 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @property
     def media_content_type(self) -> MediaType | None:
         """Content type of current playing media."""
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        _LOGGER.error("Async update called - INCOMPLETE")
 
     # def __mux_source_name(self, input_source: str) -> str:
     #     # if not input_source:
@@ -465,7 +479,12 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             return ""
         return f"{input_source_name} ({input_source_key}, {input_source_aes67_address})"
 
-    async def async_save_store_last_input(self, last_input: str) -> None:
+    def __demux_source_name(self, source_name: str) -> str:
+        if not source_name:
+            return ""
+        return source_name.split(" (", 1)[1][:-1].split(", ", 1)[0]
+
+    async def __async_save_store_last_input(self, last_input: str) -> None:
         """Save the last input source in storage if it changed."""
         storage_data = await self.store.async_load()
         if storage_data is None:
