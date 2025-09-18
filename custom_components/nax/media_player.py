@@ -278,19 +278,19 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
                 self._input_sources,
                 message.get("Device", {}).get("InputSources", {}).get("Inputs", {}),
             )
-        new_source_list = []
-        for input_source in self._input_sources:
-            input_source_name, input_source_aes67_address = (
+
+        self._attr_source_list = [
+            self.__mux_source_name(
+                input_source_key=input_source,
+                input_source_name=name,
+                input_source_aes67_address=address,
+            )
+            for input_source in self._input_sources
+            for name, address in [
                 self.__get_source_name_and_address_by_key(input_source)
-            )
-            new_source_list.append(
-                self.__mux_source_name(
-                    input_source_key=input_source,
-                    input_source_name=input_source_name,
-                    input_source_aes67_address=input_source_aes67_address,
-                )
-            )
-        self._attr_source_list = new_source_list
+            ]
+        ]
+
         if self.hass is not None:
             self.async_write_ha_state()
 
@@ -307,18 +307,19 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
-        json_data = {
-            "Device": {
-                "AvMatrixRouting": {
-                    "Routes": {
-                        self._zone_output_key: {
-                            "AudioSource": self.__demux_source_name(source)
-                        },
-                    },
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvMatrixRouting": {
+                        "Routes": {
+                            self._zone_output_key: {
+                                "AudioSource": self.__demux_source_name(source)
+                            }
+                        }
+                    }
                 }
             }
-        }
-        await self.api.client.ws_post(payload=json_data)
+        )
 
     async def async_turn_on(self) -> None:
         """Turn the media player on."""
