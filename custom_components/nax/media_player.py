@@ -23,7 +23,7 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, STORAGE_LAST_INPUT_KEY
+from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -254,6 +254,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         zone_audio_source_name, zone_audio_source_aes67_address = (
             self.__get_source_name_and_address_by_key(zone_audio_source_key)
         )
+
         if zone_audio_source_key and zone_audio_source_name:
             self._attr_state = MediaPlayerState.PLAYING
             self._attr_source = self.__mux_source_name(
@@ -267,6 +268,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         else:
             self._attr_state = MediaPlayerState.OFF
             self._attr_source = None
+
         if self.hass is not None:
             self.async_write_ha_state()
 
@@ -323,6 +325,26 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
 
     async def async_turn_on(self) -> None:
         """Turn the media player on."""
+        last_input = await self.__async_load_store_last_input()
+        last_aes67_stream = await self.__async_load_store_last_aes67_stream()
+        zone_streamer = self.api.get_stream_zone_receiver_mapping(
+            zone_output=self.zone_output
+        )
+        if last_input:
+            await self.api.set_zone_audio_source(self.zone_output, last_input)
+            if (
+                last_input == "Aes67"
+                and last_aes67_stream
+                and zone_streamer is not None
+            ):
+                await self.api.set_nax_rx_stream(
+                    streamer=zone_streamer,
+                    address=last_aes67_stream,
+                )
+        else:
+            input_sources = self.api.get_input_sources()
+            if input_sources:
+                await self.api.set_zone_audio_source(self.zone_output, input_sources[0])
 
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
@@ -494,3 +516,19 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         if last_input_dict.get(self._zone_output_key) != last_input:
             last_input_dict[self._zone_output_key] = last_input
             await self.store.async_save(storage_data)
+
+    async def __async_load_store_last_input(self) -> str | None:
+        """Load the store data asynchronously."""
+        storage_data = await self.store.async_load()
+        if storage_data is None:
+            return None
+        return storage_data.get(STORAGE_LAST_INPUT_KEY, {}).get(self._zone_output_key)
+
+    async def __async_load_store_last_aes67_stream(self) -> str | None:
+        """Load the store data asynchronously."""
+        storage_data = await self.store.async_load()
+        if storage_data is None:
+            return None
+        return storage_data.get(STORAGE_LAST_AES67_STREAM_KEY, {}).get(
+            self._zone_output_key
+        )
