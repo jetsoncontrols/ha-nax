@@ -7,6 +7,8 @@ import json
 import logging
 from typing import Any
 
+import deepmerge
+
 from cresnextws import DataEventManager
 from homeassistant.components.media_player import (
     MediaPlayerDeviceClass,
@@ -22,7 +24,7 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN
+from .const import DOMAIN, STORAGE_LAST_INPUT_KEY
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,12 +96,28 @@ async def async_setup_entry(
         .get("Zones", [])
     )
 
+    input_sources = (
+        (await api.client.http_get("/Device/InputSources/Inputs") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("InputSources", {})
+        .get("Inputs", {})
+    )
+
     matrix_routes = (
         (await api.client.http_get("/Device/AvMatrixRouting/Routes") or {})
         .get("content", {})
         .get("Device", {})
         .get("AvMatrixRouting", {})
         .get("Routes", {})
+    )
+
+    nax_tx = (
+        (await api.client.http_get("/Device/NaxAudio/NaxTx") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("NaxAudio", {})
+        .get("NaxTx", {})
     )
 
     if not all(
@@ -111,11 +129,13 @@ async def async_setup_entry(
             nax_device_firmware_version,
             nax_device_serial_number,
             zone_outputs,
+            input_sources,
             matrix_routes is not None,  # If nothing is switched we get an empty list
+            nax_tx,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
-        raise ConfigEntryNotReady("NAX device not available")
+        return
 
     entities_to_add = [
         NaxMediaPlayer(
@@ -128,7 +148,9 @@ async def async_setup_entry(
             nax_device_serial_number=nax_device_serial_number,
             zone_output_key=zone_output,
             zone_output_data=zone_outputs[zone_output],
+            input_sources_data=input_sources,
             zone_matrix_data=matrix_routes.get(zone_output, {}),
+            nax_tx_data=nax_tx,
             store=store,
         )
         for zone_output in zone_outputs
@@ -151,7 +173,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         nax_device_serial_number: str,
         zone_output_key: str,
         zone_output_data: dict,
+        input_sources_data: dict,
         zone_matrix_data: dict,
+        nax_tx_data: dict,
         store: Store,
     ) -> None:
         """Initialize the media player."""
@@ -189,14 +213,29 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             | MediaPlayerEntityFeature.SELECT_SOUND_MODE
         )
 
+        # Store input data
+        self._input_sources = input_sources_data
+        self._nax_tx = nax_tx_data
+
         # Initialize media player attributes
         self._zone_name_update(event_name="", message=zone_output_data.get("Name", ""))
         self._zone_matrix_audiosource_update(event_name="", message=zone_matrix_data)
+        self._input_sources_update(
+            event_name="/Device/InputSources/Inputs", message=input_sources_data
+        )
 
         # Subscribe to relevant events
         api.subscribe(
             f"/Device/ZoneOutputs/Zones/{zone_output_key}/Name",
             self._zone_name_update,
+        )
+        api.subscribe(
+            "/Device/InputSources/Inputs",
+            self._input_sources_update,
+        )
+        api.subscribe(
+            "/Device/NaxAudio/NaxTx",
+            self._nax_tx_update,
         )
         api.subscribe(
             f"/Device/AvMatrixRouting/Routes/{zone_output_key}",
@@ -214,12 +253,19 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     @callback
     def _zone_matrix_audiosource_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the zone matrix audio source."""
-        zone_audio_source = message.get("AudioSource", "")
-        if zone_audio_source != "":
+        zone_audio_source_key = message.get("AudioSource", "")
+        zone_audio_source_name, zone_audio_source_aes67_address = (
+            self.__get_source_name_and_address_by_key(zone_audio_source_key)
+        )
+        if zone_audio_source_key and zone_audio_source_name:
             self._attr_state = MediaPlayerState.PLAYING
-            self._attr_source = self.__mux_source_name(zone_audio_source)
+            self._attr_source = self.__mux_source_name(
+                input_source_key=zone_audio_source_key,
+                input_source_name=zone_audio_source_name,
+                input_source_aes67_address=zone_audio_source_aes67_address,
+            )
             self._save_store_task = asyncio.create_task(
-                self.async_save_store_last_input(zone_audio_source)
+                self.async_save_store_last_input(zone_audio_source_key)
             )
         else:
             self._attr_state = MediaPlayerState.OFF
@@ -227,9 +273,40 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         if self.hass is not None:
             self.async_write_ha_state()
 
-    @property
-    def source_list(self) -> list[str] | None:
-        """List of available input sources."""
+    @callback
+    def _input_sources_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the input sources."""
+        print(
+            f"Input sources update name: {event_name} with message: {json.dumps(message, indent=2)}"
+        )
+        deepmerge.always_merger.merge(self._input_sources, message)
+        new_source_list = []
+        for input_source in self._input_sources:
+            input_source_name, input_source_aes67_address = (
+                self.__get_source_name_and_address_by_key(input_source)
+            )
+            new_source_list.append(
+                self.__mux_source_name(
+                    input_source_key=input_source,
+                    input_source_name=input_source_name,
+                    input_source_aes67_address=input_source_aes67_address,
+                )
+            )
+        self._attr_source_list = new_source_list
+        print("Updated source list:", json.dumps(self._attr_source_list, indent=2))
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _nax_tx_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the NAX TX data."""
+        deepmerge.always_merger.merge(self._nax_tx, message)
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    # @property
+    # def source_list(self) -> list[str] | None:
+    #     """List of available input sources."""
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
@@ -358,10 +435,35 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     #             f"/Device/InputSources/Inputs/{source_key}/IsSignalPresent"
     #         )
 
-    def __mux_source_name(self, input_source: str) -> str:
-        if not input_source:
+    def __get_source_name_and_address_by_key(
+        self, input_source_key: str
+    ) -> tuple[str, str | None]:
+        input_source_name = (
+            self._input_sources.get(input_source_key, {}).get("Name", "")
+            if input_source_key in self._input_sources
+            else ""
+        )
+        input_source_aes67_stream_key = self._input_sources.get(
+            input_source_key, {}
+        ).get("NaxTxStream", "")
+        input_source_aes67_address = (
+            self._nax_tx.get("NaxTxStreams", {})
+            .get(input_source_aes67_stream_key, {})
+            .get("NetworkAddressStatus", None)
+            if input_source_key in self._input_sources
+            else None
+        )
+        return input_source_name, input_source_aes67_address
+
+    def __mux_source_name(
+        self,
+        input_source_key: str,
+        input_source_name: str,
+        input_source_aes67_address: str | None,
+    ) -> str:
+        if not input_source_key or not input_source_name:
             return ""
-        return f"{self.api.get_input_source_name(input_source)} ({input_source}, {self.api.get_aes67_address_for_input(input_source)})"
+        return f"{input_source_name} ({input_source_key}, {input_source_aes67_address})"
 
     async def async_save_store_last_input(self, last_input: str) -> None:
         """Save the last input source in storage if it changed."""
@@ -369,6 +471,6 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         if storage_data is None:
             storage_data = {}
         last_input_dict = storage_data.setdefault(STORAGE_LAST_INPUT_KEY, {})
-        if last_input_dict.get(self.zone_output) != last_input:
-            last_input_dict[self.zone_output] = last_input
+        if last_input_dict.get(self._zone_output_key) != last_input:
+            last_input_dict[self._zone_output_key] = last_input
             await self.store.async_save(storage_data)
