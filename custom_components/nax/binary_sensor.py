@@ -184,8 +184,8 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         """Fetch new state data for this entity."""
         await super().async_update()
         await self.api.client.ws_get(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent"
+            f"/Device/InputSources/Inputs/{self._source_input_key}/Name"
         )
         await self.api.client.ws_get(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/Name"
+            f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent"
         )

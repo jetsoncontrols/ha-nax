@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any
 
@@ -200,7 +199,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         )
         self._attr_entity_registry_visible_default = True
         self._attr_icon = "mdi:audio-video"
-        self._attr_volume_step = 0.1
+        self._attr_volume_step = 0.01
 
         self._attr_device_class = MediaPlayerDeviceClass.SPEAKER
         self._attr_supported_features = (
@@ -216,13 +215,46 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
 
         # Initialize media player attributes
         self._zone_name_update(event_name="", message=zone_output_data.get("Name", ""))
+        self._zone_volume_update(
+            event_name="",
+            message=zone_output_data.get("ZoneAudio", {}).get("Volume", 0),
+        )
+        self._zone_mute_update(
+            event_name="",
+            message=zone_output_data.get("ZoneAudio", {}).get("IsMuted", False),
+        )
+        self._zone_sound_mode_update(
+            event_name="",
+            message=zone_output_data.get("ZoneAudio", {}).get("ToneProfile", "Off"),
+        )
         self._zone_matrix_audiosource_update(event_name="", message=zone_matrix_data)
         self._input_sources_update(event_name="", message=None)  # None bypasses merge
+        self._zone_aes67_receiver_key = zone_output_data.get("NaxRxStream", "")
+        self._attr_sound_mode_list = [
+            "Off",
+            "Classical",
+            "Jazz",
+            "Pop",
+            "Rock",
+            "SpokenWord",
+        ]
 
         # Subscribe to relevant events
         api.subscribe(
             f"/Device/ZoneOutputs/Zones/{zone_output_key}/Name",
             self._zone_name_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{zone_output_key}/ZoneAudio/Volume",
+            self._zone_volume_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{zone_output_key}/ZoneAudio/IsMuted",
+            self._zone_mute_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{zone_output_key}/ZoneAudio/ToneProfile",
+            self._zone_sound_mode_update,
         )
         api.subscribe(
             "/Device/InputSources/Inputs",
@@ -248,6 +280,31 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             self.async_write_ha_state()
 
     @callback
+    def _zone_volume_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone volume."""
+        if isinstance(message, (int, float)):
+            self._attr_volume_level = message / 1000.0
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_mute_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone mute state."""
+        self._attr_is_volume_muted = bool(message)
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_sound_mode_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone sound mode."""
+        if isinstance(message, str) and message in (self.sound_mode_list or []):
+            self._attr_sound_mode = message
+        else:
+            self._attr_sound_mode = "Off"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
     def _zone_matrix_audiosource_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the zone matrix audio source."""
         zone_audio_source_key = message.get("AudioSource", "")
@@ -257,6 +314,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
 
         if zone_audio_source_key and zone_audio_source_name:
             self._attr_state = MediaPlayerState.PLAYING
+            self._attr_media_content_type = MediaType.MUSIC
             self._attr_source = self.__mux_source_name(
                 input_source_key=zone_audio_source_key,
                 input_source_name=zone_audio_source_name,
@@ -267,6 +325,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             )
         else:
             self._attr_state = MediaPlayerState.OFF
+            self._attr_media_content_type = None
             self._attr_source = None
 
         if self.hass is not None:
@@ -327,150 +386,145 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         """Turn the media player on."""
         last_input = await self.__async_load_store_last_input()
         last_aes67_stream = await self.__async_load_store_last_aes67_stream()
-        zone_streamer = self.api.get_stream_zone_receiver_mapping(
-            zone_output=self.zone_output
-        )
         if last_input:
-            await self.api.set_zone_audio_source(self.zone_output, last_input)
+            await self.__set_zone_audio_matrix_route(input_source_key=last_input)
             if (
                 last_input == "Aes67"
                 and last_aes67_stream
-                and zone_streamer is not None
+                and self._zone_aes67_receiver_key
             ):
-                await self.api.set_nax_rx_stream(
-                    streamer=zone_streamer,
-                    address=last_aes67_stream,
-                )
-        else:
-            input_sources = self.api.get_input_sources()
-            if input_sources:
-                await self.api.set_zone_audio_source(self.zone_output, input_sources[0])
+                await self.__set_zone_aes67_stream(aes67_address=last_aes67_stream)
+        elif self._input_sources:
+            await self.__set_zone_audio_matrix_route(self._input_sources[0].key)
 
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
-
-    @property
-    def volume_level(self) -> float | None:
-        """Volume level of the media player (0..1)."""
+        await self.__set_zone_audio_matrix_route(input_source_key="")
 
     async def async_volume_up(self) -> None:
         """Turn volume up for media player."""
+        if self.volume_level is None:
+            return
+        new_volume = min(self.volume_level + self._attr_volume_step, 1.0)
+        await self.async_set_volume_level(new_volume)
 
     async def async_volume_down(self) -> None:
         """Turn volume down for media player."""
+        if self.volume_level is None:
+            return
+        new_volume = max(self.volume_level - self._attr_volume_step, 0.0)
+        await self.async_set_volume_level(new_volume)
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level, range 0..1."""
+        # Convert from 0.0-1.0 to 0-1000
+        volume_level = int(volume * 1000)
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            self._zone_output_key: {
+                                "ZoneAudio": {"Volume": volume_level}
+                            }
+                        }
+                    }
+                }
+            }
+        )
 
     async def async_mute_volume(self, mute: bool) -> None:
         """Send mute command."""
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            self._zone_output_key: {"ZoneAudio": {"IsMuted": mute}}
+                        }
+                    }
+                }
+            }
+        )
 
-    @property
-    def is_volume_muted(self) -> bool | None:
-        """Boolean if volume is currently muted."""
-
-    @property
-    def sound_mode_list(self) -> list[str] | None:
-        """List of available sound modes."""
-        return ["Off", "Classical", "Jazz", "Pop", "Rock", "SpokenWord"]
-
-    async def async_select_sound_mode(self, sound_mode):
+    async def async_select_sound_mode(self, sound_mode: str) -> None:
         """Select sound mode."""
-
-    @property
-    def sound_mode(self) -> str | None:
-        """Return the current sound mode."""
-
-    @property
-    def media_content_type(self) -> MediaType | None:
-        """Content type of current playing media."""
+        if sound_mode not in (self.sound_mode_list or []):
+            _LOGGER.error("Invalid sound mode selected: %s", sound_mode)
+            return
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            self._zone_output_key: {
+                                "ZoneAudio": {
+                                    "ToneProfile": sound_mode,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
 
     async def async_update(self) -> None:
         """Fetch new state data for this entity."""
         await super().async_update()
-        _LOGGER.error("Async update called - INCOMPLETE")
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/Volume"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/IsMuted"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/ToneProfile"
+        )
+        await self.api.client.ws_get("/Device/InputSources/Inputs")
+        await self.api.client.ws_get("/Device/NaxAudio/NaxTx")
+        await self.api.client.ws_get(
+            f"/Device/AvMatrixRouting/Routes/{self._zone_output_key}"
+        )
 
-    # def __mux_source_name(self, input_source: str) -> str:
-    #     # if not input_source:
-    #     #     return ""
-    #     # return f"{self.api.get_input_source_name(input_source)} ({input_source}, {self.api.get_aes67_address_for_input(input_source)})"
+    # Helper methods
+    async def __set_zone_audio_matrix_route(self, input_source_key: str) -> None:
+        """Set the audio matrix route for the zone."""
+        if input_source_key is None:
+            return
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvMatrixRouting": {
+                        "Routes": {
+                            self._zone_output_key: {"AudioSource": input_source_key}
+                        }
+                    }
+                }
+            }
+        )
 
-    # def __demux_source_name(self, source_name: str) -> str:
-    #     # if not source_name:
-    #     #     return ""
-    #     # return source_name.split(" (", 1)[1][:-1].split(", ", 1)[0]
-
-    # @callback
-    # def _current_input_update(self, event_name: str, message: Any) -> None:
-    #     """Handle updates to the current input."""
-    #     if message in self._source_inputs:
-    #         source_name = self._source_inputs[message].get("Name", message)
-    #         self._attr_source = source_name
-    #         # Update state based on signal presence if available
-    #         is_signal_present = self._source_inputs[message].get(
-    #             "IsSignalPresent", False
-    #         )
-    #         self._attr_state = (
-    #             MediaPlayerState.PLAYING if is_signal_present else MediaPlayerState.IDLE
-    #         )
-    # add if self.hass is not None:
-    #     self.async_write_ha_state()
-
-    # @callback
-    # def _volume_level_update(self, event_name: str, message: Any) -> None:
-    #     """Handle updates to the volume level."""
-    #     # Assuming volume is in range 0-100, convert to 0.0-1.0
-    #     if isinstance(message, (int, float)):
-    #         self._attr_volume_level = message / 100.0
-    # add if self.hass is not None:
-    #     self.async_write_ha_state()
-
-    # @callback
-    # def _volume_mute_update(self, event_name: str, message: Any) -> None:
-    #     """Handle updates to the mute state."""
-    #     self._attr_is_volume_muted = bool(message)
-    # add if self.hass is not None:
-    #     self.async_write_ha_state()
-
-    # async def async_select_source(self, source: str) -> None:
-    #     """Select input source."""
-    #     # Find the key for the source name
-    #     source_key = None
-    #     for key, data in self._source_inputs.items():
-    #         if data.get("Name", key) == source:
-    #             source_key = key
-    #             break
-
-    #     if source_key:
-    #         await self.api.client.ws_post(
-    #             {"path": "/Device/InputSources/CurrentInput", "value": source_key}
-    #         )
-
-    # async def async_set_volume_level(self, volume: float) -> None:
-    #     """Set volume level, range 0..1."""
-    #     # Convert from 0.0-1.0 to 0-100
-    #     volume_level = int(volume * 100)
-    #     await self.api.client.ws_post(
-    #         {"path": "/Device/Volume/Level", "value": volume_level}
-    #     )
-
-    # async def async_mute_volume(self, mute: bool) -> None:
-    #     """Mute (True) or unmute (False) the media player."""
-    #     await self.api.client.ws_post({"path": "/Device/Volume/Mute", "value": mute})
-
-    # async def async_update(self) -> None:
-    #     """Fetch new state data for this entity."""
-    #     await super().async_update()
-    #     # Update current input
-    #     await self.api.client.ws_get("/Device/InputSources/CurrentInput")
-    #     # Update volume information
-    #     await self.api.client.ws_get("/Device/Volume/Level")
-    #     await self.api.client.ws_get("/Device/Volume/Mute")
-    #     # Update input source information
-    #     for source_key in self._source_inputs:
-    #         await self.api.client.ws_get(
-    #             f"/Device/InputSources/Inputs/{source_key}/IsSignalPresent"
-    #         )
+    async def __set_zone_aes67_stream(self, aes67_address: str) -> None:
+        """Set the AES67 stream for the zone."""
+        if not aes67_address or not self._zone_aes67_receiver_key:
+            return
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "NaxAudio": {
+                        "NaxRx": {
+                            "NaxRxStreams": {
+                                self._zone_output_key: {
+                                    "NetworkAddressRequested": aes67_address,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
 
     def __get_source_name_and_address_by_key(
         self, input_source_key: str
