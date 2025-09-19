@@ -187,20 +187,17 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             nax_device_serial_number=nax_device_serial_number,
         )
         self._zone_output_key = zone_output_key
-        self.store = store
+        self._store = store
         self._load_store_task = None
         self._save_store_task = None
         self._input_sources = input_sources_data
         self._nax_tx = nax_tx_data
 
+        # Initialize media player attributes
         self._attr_unique_id = f"{format_mac(mac_address)}_{zone_output_key.lower()}"
-        self.entity_id = (
-            f"media_player.{format_mac(mac_address)}_{zone_output_key.lower()}"
-        )
+        self.entity_id = f"media_player.{self._attr_unique_id}"
         self._attr_entity_registry_visible_default = True
         self._attr_icon = "mdi:audio-video"
-        self._attr_volume_step = 0.01
-
         self._attr_device_class = MediaPlayerDeviceClass.SPEAKER
         self._attr_supported_features = (
             MediaPlayerEntityFeature.VOLUME_SET
@@ -212,8 +209,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             | MediaPlayerEntityFeature.SELECT_SOURCE
             | MediaPlayerEntityFeature.SELECT_SOUND_MODE
         )
-
-        # Initialize media player attributes
+        self._attr_volume_step = 0.01
         self._zone_name_update(event_name="", message=zone_output_data.get("Name", ""))
         self._zone_volume_update(
             event_name="",
@@ -563,24 +559,24 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
 
     async def __async_save_store_last_input(self, last_input: str) -> None:
         """Save the last input source in storage if it changed."""
-        storage_data = await self.store.async_load()
+        storage_data = await self._store.async_load()
         if storage_data is None:
             storage_data = {}
         last_input_dict = storage_data.setdefault(STORAGE_LAST_INPUT_KEY, {})
         if last_input_dict.get(self._zone_output_key) != last_input:
             last_input_dict[self._zone_output_key] = last_input
-            await self.store.async_save(storage_data)
+            await self._store.async_save(storage_data)
 
     async def __async_load_store_last_input(self) -> str | None:
         """Load the store data asynchronously."""
-        storage_data = await self.store.async_load()
+        storage_data = await self._store.async_load()
         if storage_data is None:
             return None
         return storage_data.get(STORAGE_LAST_INPUT_KEY, {}).get(self._zone_output_key)
 
     async def __async_load_store_last_aes67_stream(self) -> str | None:
         """Load the store data asynchronously."""
-        storage_data = await self.store.async_load()
+        storage_data = await self._store.async_load()
         if storage_data is None:
             return None
         return storage_data.get(STORAGE_LAST_AES67_STREAM_KEY, {}).get(
