@@ -24,7 +24,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = sorted(
     [
         Platform.MEDIA_PLAYER,
-        # Platform.SELECT,
+        Platform.SELECT,
         Platform.BINARY_SENSOR,
     ]
 )
