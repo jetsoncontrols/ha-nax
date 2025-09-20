@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
@@ -391,7 +392,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             ):
                 await self.__set_zone_aes67_stream(aes67_address=last_aes67_stream)
         elif self._input_sources:
-            await self.__set_zone_audio_matrix_route(self._input_sources[0].key)
+            await self.__set_zone_audio_matrix_route(next(iter(self._input_sources)))
 
     async def async_turn_off(self) -> None:
         """Turn the media player off."""
