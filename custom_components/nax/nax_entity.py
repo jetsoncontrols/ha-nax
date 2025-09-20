@@ -2,7 +2,11 @@
 
 import logging
 
-from cresnextws import ConnectionStatus, DataEventManager
+from cresnextws import (
+    ConnectionStatus,
+    DataEventManager,
+    __version__ as cresnextws_version,
+)
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
@@ -47,7 +51,7 @@ class NaxEntity(Entity):
             name=nax_device_name,
             manufacturer=nax_device_manufacturer,
             model=nax_device_model,
-            sw_version=nax_device_firmware_version,
+            sw_version=f"{nax_device_firmware_version} (cresnextws {cresnextws_version})",
             serial_number=nax_device_serial_number,
             configuration_url=self.api.client.get_base_endpoint(),
         )
