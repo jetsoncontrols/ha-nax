@@ -64,6 +64,9 @@ class NaxEntity(Entity):
         if status == ConnectionStatus.CONNECTED:
             self._attr_available = True
             self.schedule_update_ha_state(force_refresh=True)
+        elif status == ConnectionStatus.RECONNECTING_FIRST:
+            # Consider the entity still available during the first reconnection attempt
+            pass
         else:
             self._attr_available = False
             self.async_write_ha_state()
