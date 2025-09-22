@@ -1,19 +1,24 @@
-"""Module containing the Nax select entities for Home Assistant."""
+"""Nax Select Entities."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
 import socket
+from typing import Any
 import json
 
+import deepmerge
+
+from cresnextws import DataEventManager
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
-from . import NaxEntity
 from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY
-from .nax.nax_api import NaxApi
+from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,192 +28,314 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Nax select entities from a config entry."""
-    api: NaxApi = hass.data[DOMAIN][config_entry.entry_id]
-    mac_address = await hass.async_add_executor_job(api.get_device_mac_address)
+    """Set up NAX select entities for a config entry."""
+
+    api: DataEventManager = hass.data[DOMAIN][config_entry.entry_id]
     store = config_entry.runtime_data
 
-    entities_to_add = []
-    zones = await hass.async_add_executor_job(api.get_all_zone_outputs)
-    if not zones:
-        _LOGGER.error(
-            "No zone outputs returned for NAX device %s; skipping select entities",
+    mac_address = (
+        (await api.client.http_get("/Device/DeviceInfo/MacAddress") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("MacAddress")
+    )
+
+    nax_device_name = (
+        (await api.client.http_get("/Device/DeviceInfo/Name") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("Name")
+    )
+
+    nax_device_manufacturer = (
+        (await api.client.http_get("/Device/DeviceInfo/Manufacturer") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("Manufacturer")
+    )
+
+    nax_device_model = (
+        (await api.client.http_get("/Device/DeviceInfo/Model") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("Model")
+    )
+
+    nax_device_firmware_version = (
+        (await api.client.http_get("/Device/DeviceInfo/DeviceVersion") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("DeviceVersion")
+    )
+
+    nax_device_serial_number = (
+        (await api.client.http_get("/Device/DeviceInfo/SerialNumber") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("DeviceInfo", {})
+        .get("SerialNumber")
+    )
+
+    zone_outputs = (
+        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("ZoneOutputs", {})
+        .get("Zones", [])
+    )
+
+    nax_sdp_streams = (
+        (await api.client.http_get("/Device/NaxAudio/NaxSdp/NaxSdpStreams") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("NaxAudio", {})
+        .get("NaxSdp", {})
+        .get("NaxSdpStreams", {})
+    )
+
+    nax_rx = (
+        (await api.client.http_get("/Device/NaxAudio/NaxRx") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("NaxAudio", {})
+        .get("NaxRx", {})
+    )
+
+    if not all(
+        [
             mac_address,
-        )
-        print(json.dumps(api.get_data(data_path="Device.ZoneOutputs.Zones"), indent=2))
-    else:
-        for zone in zones:
+            nax_device_name,
+            nax_device_manufacturer,
+            nax_device_model,
+            nax_device_firmware_version,
+            nax_device_serial_number,
+            zone_outputs,
+            nax_sdp_streams is not None,
+            nax_rx,
+        ]
+    ):
+        _LOGGER.error("Could not retrieve required NAX device information")
+        return
+
+    entities_to_add = []
+
+    # Only create select entities for zones that have AES67 receivers
+    for zone_output in zone_outputs:
+        zone_output_data = zone_outputs[zone_output]
+        zone_aes67_receiver_key = zone_output_data.get("NaxRxStream", "")
+
+        if zone_aes67_receiver_key:
             entities_to_add.append(
-                NaxZoneNightModeSelect(
+                NaxAes67StreamSelect(
                     api=api,
-                    unique_id=f"{mac_address}_{zone}_night_mode",
-                    zone_output=zone,
-                )
-            )
-            entities_to_add.append(
-                NaxZoneAes67StreamSelect(
-                    api=api,
-                    unique_id=f"{mac_address}_{zone}_aes67_stream",
-                    zone_output=zone,
+                    mac_address=mac_address,
+                    nax_device_name=nax_device_name,
+                    nax_device_manufacturer=nax_device_manufacturer,
+                    nax_device_model=nax_device_model,
+                    nax_device_firmware_version=nax_device_firmware_version,
+                    nax_device_serial_number=nax_device_serial_number,
+                    zone_output_key=zone_output,
+                    zone_output_data=zone_output_data,
+                    zone_nax_rx_data=nax_rx.get("NaxRxStreams", {}).get(
+                        zone_aes67_receiver_key, {}
+                    ),
+                    nax_sdp_streams=nax_sdp_streams,
                     store=store,
                 )
             )
+
     async_add_entities(entities_to_add)
 
 
-class NaxBaseSelect(NaxEntity, SelectEntity):
-    """Base class for Nax select entities."""
-
-    def __init__(self, api: NaxApi, unique_id: str) -> None:
-        """Initialize the base select entity."""
-        super().__init__(api=api, unique_id=unique_id)
-        self.entity_id = f"select.{self._attr_unique_id}"
-
-
-class NaxZoneNightModeSelect(NaxBaseSelect):
-    """Representation of a Nax Zone Night Mode Select entity."""
-
-    def __init__(self, api: NaxApi, unique_id: str, zone_output: str) -> None:
-        """Initialize the select."""
-        super().__init__(api, unique_id)
-        self.zone_output = zone_output
-        self._attr_icon = "mdi:weather-night"
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity is added to Home Assistant."""
-        await super().async_added_to_hass()  # type: ignore[misc]
-        self.__subscriptions()
-
-    def __subscriptions(self) -> None:
-        self.api.subscribe_data_updates(
-            f"Device.ZoneOutputs.Zones.{self.zone_output}.ZoneAudio.NightMode",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
-            self._generic_update,
-        )
-
-    @property
-    def name(self) -> str:
-        """Return the name of the entity."""
-        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Night Mode"
-
-    @property
-    def current_option(self) -> str | None:
-        """Return the current option."""
-        return self.api.get_zone_night_mode(self.zone_output)
-
-    @property
-    def options(self) -> list[str]:
-        """Return the list of available options."""
-        return self.api.get_zone_night_modes() or []
-
-    async def async_select_option(self, option: str) -> None:
-        """Change the selected option."""
-        await self.api.set_zone_night_mode(zone_output=self.zone_output, mode=option)
-
-
-class NaxZoneAes67StreamSelect(NaxBaseSelect):
-    """Representation of a Nax Zone Aes67 Stream Select entity."""
+class NaxAes67StreamSelect(NaxEntity, SelectEntity):
+    """Representation of a NAX AES67 Stream Select."""
 
     def __init__(
-        self, api: NaxApi, unique_id: str, zone_output: str, store: Store
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        zone_output_key: str,
+        zone_output_data: dict,
+        zone_nax_rx_data: dict,
+        nax_sdp_streams: dict,
+        store: Store,
     ) -> None:
-        """Initialize the select."""
-        super().__init__(api, unique_id)
-        self.zone_output = zone_output
-        self.store = store
-
-        self._attr_entity_registry_visible_default = True
-        self._attr_icon = "mdi:multicast"
-
+        """Initialize the select entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._zone_output_key = zone_output_key
+        self._zone_aes67_receiver_key = zone_output_data.get("NaxRxStream", "")
+        self._nax_sdp_streams = nax_sdp_streams
+        self._store = store
         self._load_store_task = None
         self._save_store_task = None
 
-    async def async_added_to_hass(self) -> None:
-        """Run when entity is added to Home Assistant."""
-        await super().async_added_to_hass()  # type: ignore[misc]
-        self.__subscriptions()
+        # Initialize attributes
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{zone_output_key}_aes67_stream"
+        )
+        self.entity_id = f"select.{self._attr_unique_id}"
+        self._attr_entity_registry_visible_default = True
+        self._attr_icon = "mdi:multicast"
+        self._zone_name_update(
+            event_name="", message=zone_output_data.get("Name", "Unknown")
+        )
+        self._nax_sdp_update(
+            event_name="", message=None
+        )  # Initialize available options
+        self._zone_aes67_stream_update(
+            event_name="", message=zone_nax_rx_data.get("NetworkAddressStatus", "")
+        )  # Initialize current selection
 
-    async def async_save_store_last_aes67_stream(self, last_aes67_stream: str) -> None:
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
+            self._zone_name_update,
+        )
+        api.subscribe(
+            "/Device/NaxAudio/NaxSdp/NaxSdpStreams",
+            self._nax_sdp_update,
+            full_message=True,
+        )
+        api.subscribe(
+            f"/Device/NaxAudio/NaxRx/NaxRxStreams/{self._zone_aes67_receiver_key}/NetworkAddressStatus",
+            self._zone_aes67_stream_update,
+        )
+
+    @callback
+    def _zone_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone name."""
+        self._attr_name = f"{message} AES67 Stream"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _nax_sdp_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the NAX RX data (available streams)."""
+        if message is not None:
+            deepmerge.always_merger.merge(
+                self._nax_sdp_streams,
+                message.get("Device", {})
+                .get("NaxAudio", {})
+                .get("NaxSdp", {})
+                .get("NaxSdpStreams", {}),
+            )
+        options = [{"name": "None", "address": "0.0.0.0"}]
+        for stream in self._nax_sdp_streams.values():
+            stream_address = stream.get("NetworkAddressStatus", "")
+            stream_name = stream.get("SessionNameStatus", "Unknown")
+            if stream_address:
+                options.append({"name": stream_name, "address": stream_address})
+
+        self._attr_options = [
+            self.__mux_stream_name(stream)
+            for stream in sorted(
+                options, key=lambda item: socket.inet_aton(item["address"])
+            )
+            # if not self.api.get_aes67_address_is_local(stream["address"]) # Ignore local streams
+        ]
+
+        # Ensure current selection is still valid
+        if self._attr_current_option not in self._attr_options:
+            if self.hass is not None:
+                self.hass.async_create_task(self.async_select_option("None"))
+
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_aes67_stream_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the current AES67 stream selection."""
+        if not message:
+            self._attr_current_option = self.__mux_stream_name(
+                {"name": "None", "address": "0.0.0.0"}
+            )
+        else:
+            # Find the matching option in our list
+            current_address = str(message)
+            found_option = self.__mux_stream_name(
+                {"name": "None", "address": "0.0.0.0"}
+            )
+            for stream in self._nax_sdp_streams.values():
+                stream_address = stream.get("NetworkAddressStatus", "")
+                stream_name = stream.get("SessionNameStatus", "Unknown")
+                if stream_address == current_address:
+                    found_option = self.__mux_stream_name(
+                        {"name": stream_name, "address": stream_address}
+                    )
+                    if self.hass is not None and stream_address != "0.0.0.0":
+                        self.hass.async_create_task(
+                            self.__async_save_store_last_aes67_stream(stream_address)
+                        )
+                    break
+            self._attr_current_option = found_option
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the selected AES67 stream."""
+        if option not in self._attr_options:
+            _LOGGER.error("Invalid option selected: %s", option)
+            return
+
+        stream_address = self.__demux_stream_name(option)
+
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "NaxAudio": {
+                        "NaxRx": {
+                            "NaxRxStreams": {
+                                self._zone_aes67_receiver_key: {
+                                    "NetworkAddressRequested": stream_address
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get("/Device/NaxAudio/NaxSdp/NaxSdpStreams")
+        await self.api.client.ws_get(
+            f"/Device/NaxAudio/NaxRx/NaxRxStreams/{self._zone_aes67_receiver_key}/NetworkAddressStatus"
+        )
+
+    # Helper Functions
+    async def __async_save_store_last_aes67_stream(
+        self, last_aes67_stream: str
+    ) -> None:
         """Save the last AES67 stream address in storage if it changed."""
-        storage_data = await self.store.async_load()
+        storage_data = await self._store.async_load()
         if storage_data is None:
             storage_data = {}
         stream_dict = storage_data.setdefault(STORAGE_LAST_AES67_STREAM_KEY, {})
-        if stream_dict.get(self.zone_output) != last_aes67_stream:
-            stream_dict[self.zone_output] = last_aes67_stream
-            await self.store.async_save(storage_data)
-
-    def __subscriptions(self) -> None:
-        self.api.subscribe_data_updates(
-            f"Device.ZoneOutputs.Zones.{self.zone_output}.Name",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            f"Device.NaxAudio.NaxRx.NaxRxStreams.{self.api.get_stream_zone_receiver_mapping(zone_output=self.zone_output)}.NetworkAddressStatus",
-            self._generic_update,
-        )
-        self.api.subscribe_data_updates(
-            "Device.NaxAudio.NaxSdp.NaxSdpStreams",
-            self._generic_update,
-        )
-
-    @property
-    def name(self) -> str:
-        """Return the name of the entity."""
-        return f"{self.api.get_device_name()} {self.api.get_zone_name(self.zone_output)} Zone Aes67 Stream"
-
-    @property
-    def current_option(self) -> str | None:
-        """Return the current option."""
-        zone_streamer = self.api.get_stream_zone_receiver_mapping(
-            zone_output=self.zone_output
-        )
-        if not zone_streamer:
-            return None
-        streamer_address = self.api.get_nax_rx_stream_address(streamer=zone_streamer)
-        streams = self.api.get_aes67_streams() or []
-        streams.append({"name": "None", "address": "0.0.0.0"})
-        matching_stream: dict[str, str] | None = None
-        for stream in streams:
-            if stream["address"] == streamer_address:
-                matching_stream = stream
-                if stream["address"] != "0.0.0.0":
-                    self._save_store_task = asyncio.create_task(
-                        self.async_save_store_last_aes67_stream(stream["address"])
-                    )
-                break
-        if streamer_address and matching_stream:
-            return self.__mux_stream_name(matching_stream)
-        if streamer_address == "0.0.0.0":
-            return self.__mux_stream_name({"name": "None", "address": "0.0.0.0"})
-        return None
-
-    @property
-    def options(self) -> list[str]:
-        """Return the list of available options."""
-        streams = self.api.get_aes67_streams() or []
-        streams.append({"name": "None", "address": "0.0.0.0"})
-        return [
-            self.__mux_stream_name(stream)
-            for stream in sorted(
-                streams, key=lambda item: socket.inet_aton(item["address"])
-            )
-            if not self.api.get_aes67_address_is_local(stream["address"])
-        ]
-
-    async def async_select_option(self, option: str) -> None:
-        """Change the selected option."""
-        zone_streamer = self.api.get_stream_zone_receiver_mapping(
-            zone_output=self.zone_output
-        )
-        if not zone_streamer:
-            return
-        await self.api.set_nax_rx_stream(
-            streamer=zone_streamer, address=self.__demux_stream_name(option)
-        )
+        if stream_dict.get(self._zone_output_key) != last_aes67_stream:
+            stream_dict[self._zone_output_key] = last_aes67_stream
+            await self._store.async_save(storage_data)
 
     def __mux_stream_name(self, stream_arg: dict[str, str] | None) -> str:
         if not stream_arg:
