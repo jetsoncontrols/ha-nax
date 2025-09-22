@@ -5,7 +5,7 @@
     "integration_type": "device",
     "config_flow": true,
     "documentation": "https://github.com/jetsoncontrols/ha-nax",
-    "requirements": ["deepmerge>=1.1.0,<2.0.0", "cresnextws==0.1.7"],
+    "requirements": ["deepmerge>=1.1.0,<2.0.0", "cresnextws==0.1.8"],
     "dependencies": [],
     "codeowners": ["@scottshanafelt"],
     "iot_class": "local_push"
