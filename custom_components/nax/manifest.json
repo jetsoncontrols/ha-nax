@@ -4,7 +4,7 @@
     "version": "2.0.0",
     "integration_type": "device",
     "config_flow": true,
-    "documentation": "https://www.crestron.com/Products/Featured-Solutions/Audio-Over-IP",
+    "documentation": "https://github.com/jetsoncontrols/ha-nax",
     "requirements": ["deepmerge>=1.1.0,<2.0.0", "cresnextws==0.1.7"],
     "dependencies": [],
     "codeowners": ["@scottshanafelt"],
