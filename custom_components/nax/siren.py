@@ -2,18 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 import deepmerge
 
 from cresnextws import DataEventManager
-from homeassistant.components.siren import (
-    ATTR_TONE,
-    SirenEntity,
-    SirenEntityFeature,
-)
+from homeassistant.components.siren import ATTR_TONE, SirenEntity, SirenEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import format_mac
@@ -137,8 +132,7 @@ class NaxSiren(NaxEntity, SirenEntity):
 
         # Enable tone support
         self._attr_supported_features = (
-            SirenEntityFeature.TURN_ON
-            | SirenEntityFeature.TONES
+            SirenEntityFeature.TURN_ON | SirenEntityFeature.TONES
         )
 
         # Initialize attributes
@@ -168,12 +162,12 @@ class NaxSiren(NaxEntity, SirenEntity):
         self._attr_is_on = False
         self._attr_available_tones = []
 
-        for parent_key, parent_data in self._door_chimes.items():
+        for parent_data in self._door_chimes.values():
             # Skip non-dict items like "FilterType", "Version", etc.
             if not isinstance(parent_data, dict):
                 continue
             # Iterate through all chimes in this parent category
-            for slot_name, chime_data in parent_data.items():
+            for chime_data in parent_data.values():
                 if isinstance(chime_data, dict):
                     if chime_data.get("PlaybackInProgress") is True:
                         self._attr_is_on = True
@@ -183,10 +177,11 @@ class NaxSiren(NaxEntity, SirenEntity):
         if self.hass is not None:
             self.async_write_ha_state()
 
-
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the siren on."""
-        tone = kwargs.get(ATTR_TONE) or (self.available_tones[0] if self.available_tones else None)
+        tone = kwargs.get(ATTR_TONE) or (
+            self.available_tones[0] if self.available_tones else None
+        )
 
         _LOGGER.info("Siren turn_on called with tone=%s", tone)
 
@@ -205,7 +200,7 @@ class NaxSiren(NaxEntity, SirenEntity):
                                                 "DurationInSeconds": 0,
                                                 "RepeatCount": 1,
                                                 "PlaybackMode": "Count",
-                                                "Play": True
+                                                "Play": True,
                                             }
                                         }
                                     }
