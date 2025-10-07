@@ -26,6 +26,7 @@ PLATFORMS = sorted(
         Platform.MEDIA_PLAYER,
         Platform.SELECT,
         Platform.BINARY_SENSOR,
+        Platform.SIREN
     ]
 )
 
