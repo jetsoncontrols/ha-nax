@@ -253,7 +253,7 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
         ]
 
         # Ensure current selection is still valid
-        if self._attr_current_option not in self._attr_options:
+        if hasattr(self, '_attr_current_option') and self._attr_current_option not in self._attr_options:
             if self.hass is not None:
                 self.hass.async_create_task(self.async_select_option("None"))
 
