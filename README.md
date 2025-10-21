@@ -54,7 +54,7 @@ This integration supports Crestron NAX audio devices that use the CresNext WebSo
 
 ## Requirements
 
-- Home Assistant 2023.1 or newer
+- Home Assistant 2025.8 or newer
 - Crestron NAX device with network connectivity
 - Valid NAX device credentials
 
