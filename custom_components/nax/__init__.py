@@ -38,7 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             host=entry.data[CONF_HOST],
             username=entry.data[CONF_USERNAME],
             password=entry.data[CONF_PASSWORD],
-            health_check_path="/Device/DeviceInfo/Version",
+            # health_check_path="/Device/DeviceInfo/Version",
         )
     )
     api = DataEventManager(client)
