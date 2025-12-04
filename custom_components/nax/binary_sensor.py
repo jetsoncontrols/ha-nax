@@ -84,6 +84,14 @@ async def async_setup_entry(
         .get("Inputs", [])
     )
 
+    zone_outputs = (
+        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("ZoneOutputs", {})
+        .get("Zones", [])
+    )
+
     if not all(
         [
             mac_address,
@@ -93,6 +101,7 @@ async def async_setup_entry(
             nax_device_firmware_version,
             nax_device_serial_number,
             source_inputs,
+            zone_outputs,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
@@ -112,6 +121,23 @@ async def async_setup_entry(
         )
         for source_input in source_inputs
     ]
+
+    entities_to_add.extend(
+        [
+            NaxZoneOutputSignalBinarySensor(
+                api=api,
+                mac_address=mac_address,
+                nax_device_name=nax_device_name,
+                nax_device_manufacturer=nax_device_manufacturer,
+                nax_device_model=nax_device_model,
+                nax_device_firmware_version=nax_device_firmware_version,
+                nax_device_serial_number=nax_device_serial_number,
+                zone_output_key=zone_output,
+                zone_output_data=zone_outputs[zone_output],
+            )
+            for zone_output in zone_outputs
+        ]
+    )
 
     async_add_entities(entities_to_add)
 
@@ -188,4 +214,79 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         await self.api.client.ws_get(
             f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent"
+        )
+
+
+class NaxZoneOutputSignalBinarySensor(NaxEntity, BinarySensorEntity):
+    """Representation of a NAX Zone Output Signal Sensor."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        zone_output_key: str,
+        zone_output_data: dict,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._zone_output_key = zone_output_key
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{zone_output_key}_signal_detected"
+        )
+        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_signal_detected"
+        self._attr_icon = "mdi:waveform"
+
+        # Initialize sensor attributes
+        self._is_signal_detected_update(
+            event_name="", message=zone_output_data.get("IsSignalDetected", False)
+        )
+        self._zone_name_update(
+            event_name="", message=zone_output_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/IsSignalDetected",
+            self._is_signal_detected_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
+            self._zone_name_update,
+        )
+
+    @callback
+    def _is_signal_detected_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the signal detection."""
+        self._attr_is_on = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone name."""
+        self._attr_name = f"{message} Signal Detected"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/IsSignalDetected"
         )
