@@ -156,6 +156,23 @@ async def async_setup_entry(
         ]
     )
 
+    entities_to_add.extend(
+        [
+            NaxZoneOutputCastingBinarySensor(
+                api=api,
+                mac_address=mac_address,
+                nax_device_name=nax_device_name,
+                nax_device_manufacturer=nax_device_manufacturer,
+                nax_device_model=nax_device_model,
+                nax_device_firmware_version=nax_device_firmware_version,
+                nax_device_serial_number=nax_device_serial_number,
+                zone_output_key=zone_output,
+                zone_output_data=zone_outputs[zone_output],
+            )
+            for zone_output in zone_outputs
+        ]
+    )
+
     async_add_entities(entities_to_add)
 
 
@@ -381,4 +398,80 @@ class NaxZoneOutputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         await self.api.client.ws_get(
             f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/IsSignalDetected"
+        )
+
+
+class NaxZoneOutputCastingBinarySensor(NaxEntity, BinarySensorEntity):
+    """Representation of a NAX Zone Output Casting Sensor."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        zone_output_key: str,
+        zone_output_data: dict,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._zone_output_key = zone_output_key
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{zone_output_key}_casting_active"
+        )
+        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_casting_active"
+        self._attr_icon = "mdi:cast"
+
+        # Initialize sensor attributes
+        zone_based_providers = zone_output_data.get("ZoneBasedProviders", {})
+        self._is_casting_active_update(
+            event_name="", message=zone_based_providers.get("IsCastingActive", False)
+        )
+        self._zone_name_update(
+            event_name="", message=zone_output_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneBasedProviders/IsCastingActive",
+            self._is_casting_active_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
+            self._zone_name_update,
+        )
+
+    @callback
+    def _is_casting_active_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the casting active status."""
+        self._attr_is_on = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone name."""
+        self._attr_name = f"{message} Casting Active"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneBasedProviders/IsCastingActive"
         )
