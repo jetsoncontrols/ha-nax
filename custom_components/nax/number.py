@@ -1,4 +1,4 @@
-"""Nax Sensors."""
+"""Nax Number Entities."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ import logging
 from typing import Any
 
 from cresnextws import DataEventManager
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -24,7 +24,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up NAX sensor entities for a config entry."""
+    """Set up NAX number entities for a config entry."""
 
     api: DataEventManager = hass.data[DOMAIN][config_entry.entry_id]
 
@@ -105,10 +105,10 @@ async def async_setup_entry(
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
-        raise ConfigEntryNotReady("NAX device not available")
+        return
 
     entities_to_add = [
-        NaxInputSignalBinarySensor(
+        NaxInputCompensationNumber(
             api=api,
             mac_address=mac_address,
             nax_device_name=nax_device_name,
@@ -124,24 +124,7 @@ async def async_setup_entry(
 
     entities_to_add.extend(
         [
-            NaxInputClippingBinarySensor(
-                api=api,
-                mac_address=mac_address,
-                nax_device_name=nax_device_name,
-                nax_device_manufacturer=nax_device_manufacturer,
-                nax_device_model=nax_device_model,
-                nax_device_firmware_version=nax_device_firmware_version,
-                nax_device_serial_number=nax_device_serial_number,
-                source_input_key=source_input,
-                source_input_data=source_inputs[source_input],
-            )
-            for source_input in source_inputs
-        ]
-    )
-
-    entities_to_add.extend(
-        [
-            NaxZoneOutputSignalBinarySensor(
+            NaxZoneDefaultVolumeNumber(
                 api=api,
                 mac_address=mac_address,
                 nax_device_name=nax_device_name,
@@ -158,7 +141,7 @@ async def async_setup_entry(
 
     entities_to_add.extend(
         [
-            NaxZoneOutputCastingBinarySensor(
+            NaxZoneMinVolumeNumber(
                 api=api,
                 mac_address=mac_address,
                 nax_device_name=nax_device_name,
@@ -175,7 +158,7 @@ async def async_setup_entry(
 
     entities_to_add.extend(
         [
-            NaxZoneOutputSpeakerClippingBinarySensor(
+            NaxZoneMaxVolumeNumber(
                 api=api,
                 mac_address=mac_address,
                 nax_device_name=nax_device_name,
@@ -187,15 +170,20 @@ async def async_setup_entry(
                 zone_output_data=zone_outputs[zone_output],
             )
             for zone_output in zone_outputs
-            if zone_outputs[zone_output].get("ZoneAudio", {}).get("IsAmplificationSupported", False)
         ]
     )
 
     async_add_entities(entities_to_add)
 
 
-class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
-    """Representation of a NAX Input Signal Sensor."""
+class NaxInputCompensationNumber(NaxEntity, NumberEntity):
+    """Representation of a NAX Input Compensation Number Entity."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = -10.0
+    _attr_native_max_value = 10.0
+    _attr_native_step = 0.1
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -209,7 +197,7 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         source_input_key: str,
         source_input_data: dict,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the number entity."""
         super().__init__(
             api=api,
             mac_address=mac_address,
@@ -221,14 +209,16 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._source_input_key = source_input_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{source_input_key}_signal_present"
+            f"{format_mac(mac_address)}_{source_input_key}_compensation"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_signal_present"
-        self._attr_icon = "mdi:waveform"
+        self.entity_id = f"number.{format_mac(mac_address)}_{source_input_key.lower()}_compensation"
+        self._attr_icon = "mdi:tune"
+        self._attr_native_unit_of_measurement = "dB"
 
-        # Initialize media player attributes
-        self._is_signal_present_update(
-            event_name="", message=source_input_data.get("IsSignalPresent", False)
+        # Initialize number entity attributes
+        source_audio = source_input_data.get("SourceAudio", {})
+        self._compensation_update(
+            event_name="", message=source_audio.get("Compensation", 0)
         )
         self._input_name_update(
             event_name="", message=source_input_data.get("Name", "Unknown")
@@ -236,8 +226,8 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
 
         # Subscribe to relevant events
         api.subscribe(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent",
-            self._is_signal_present_update,
+            f"/Device/InputSources/Inputs/{self._source_input_key}/SourceAudio/Compensation",
+            self._compensation_update,
         )
         api.subscribe(
             f"/Device/InputSources/Inputs/{self._source_input_key}/Name",
@@ -245,18 +235,39 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
 
     @callback
-    def _is_signal_present_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the signal presence."""
-        self._attr_is_on = message
+    def _compensation_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the compensation."""
+        # Convert from device value to dB (device stores in tenths)
+        self._attr_native_value = message / 10.0
         if self.hass is not None:
             self.async_write_ha_state()
 
     @callback
     def _input_name_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the input name."""
-        self._attr_name = f"{message} Signal Present"
+        self._attr_name = f"{message} Compensation"
         if self.hass is not None:
             self.async_write_ha_state()
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the compensation."""
+        # Convert from dB to device value (device stores in tenths)
+        device_value = int(value * 10)
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "InputSources": {
+                        "Inputs": {
+                            self._source_input_key: {
+                                "SourceAudio": {
+                                    "Compensation": device_value
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
 
     async def async_update(self) -> None:
         """Fetch new state data for this entity."""
@@ -265,87 +276,18 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
             f"/Device/InputSources/Inputs/{self._source_input_key}/Name"
         )
         await self.api.client.ws_get(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent"
+            f"/Device/InputSources/Inputs/{self._source_input_key}/SourceAudio/Compensation"
         )
 
 
-class NaxInputClippingBinarySensor(NaxEntity, BinarySensorEntity):
-    """Representation of a NAX Input Clipping Sensor."""
+class NaxZoneDefaultVolumeNumber(NaxEntity, NumberEntity):
+    """Representation of a NAX Zone Default Volume Number Entity."""
 
-    def __init__(
-        self,
-        api: DataEventManager,
-        mac_address: str,
-        nax_device_name: str,
-        nax_device_manufacturer: str,
-        nax_device_model: str,
-        nax_device_firmware_version: str,
-        nax_device_serial_number: str,
-        source_input_key: str,
-        source_input_data: dict,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-        )
-        self._source_input_key = source_input_key
-        self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{source_input_key}_clipping_detected"
-        )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_clipping_detected"
-        self._attr_icon = "mdi:alert-octagon"
-
-        # Initialize sensor attributes
-        self._is_clipping_detected_update(
-            event_name="", message=source_input_data.get("IsClippingDetected", False)
-        )
-        self._input_name_update(
-            event_name="", message=source_input_data.get("Name", "Unknown")
-        )
-
-        # Subscribe to relevant events
-        api.subscribe(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/IsClippingDetected",
-            self._is_clipping_detected_update,
-        )
-        api.subscribe(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/Name",
-            self._input_name_update,
-        )
-
-    @callback
-    def _is_clipping_detected_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the clipping detection."""
-        self._attr_is_on = message
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-    @callback
-    def _input_name_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the input name."""
-        self._attr_name = f"{message} Clipping Detected"
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-    async def async_update(self) -> None:
-        """Fetch new state data for this entity."""
-        await super().async_update()
-        await self.api.client.ws_get(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/Name"
-        )
-        await self.api.client.ws_get(
-            f"/Device/InputSources/Inputs/{self._source_input_key}/IsClippingDetected"
-        )
-
-
-class NaxZoneOutputSignalBinarySensor(NaxEntity, BinarySensorEntity):
-    """Representation of a NAX Zone Output Signal Sensor."""
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+    _attr_native_step = 0.1
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -359,7 +301,7 @@ class NaxZoneOutputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         zone_output_key: str,
         zone_output_data: dict,
     ) -> None:
-        """Initialize the sensor."""
+        """Initialize the number entity."""
         super().__init__(
             api=api,
             mac_address=mac_address,
@@ -371,167 +313,16 @@ class NaxZoneOutputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_signal_detected"
+            f"{format_mac(mac_address)}_{zone_output_key}_default_volume"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_signal_detected"
-        self._attr_icon = "mdi:waveform"
+        self.entity_id = f"number.{format_mac(mac_address)}_{zone_output_key.lower()}_default_volume"
+        self._attr_icon = "mdi:volume-high"
+        self._attr_native_unit_of_measurement = "%"
 
-        # Initialize sensor attributes
-        self._is_signal_detected_update(
-            event_name="", message=zone_output_data.get("IsSignalDetected", False)
-        )
-        self._zone_name_update(
-            event_name="", message=zone_output_data.get("Name", "Unknown")
-        )
-
-        # Subscribe to relevant events
-        api.subscribe(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/IsSignalDetected",
-            self._is_signal_detected_update,
-        )
-        api.subscribe(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
-            self._zone_name_update,
-        )
-
-    @callback
-    def _is_signal_detected_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the signal detection."""
-        self._attr_is_on = message
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-    @callback
-    def _zone_name_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the zone name."""
-        self._attr_name = f"{message} Signal Detected"
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-    async def async_update(self) -> None:
-        """Fetch new state data for this entity."""
-        await super().async_update()
-        await self.api.client.ws_get(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
-        )
-        await self.api.client.ws_get(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/IsSignalDetected"
-        )
-
-
-class NaxZoneOutputCastingBinarySensor(NaxEntity, BinarySensorEntity):
-    """Representation of a NAX Zone Output Casting Sensor."""
-
-    def __init__(
-        self,
-        api: DataEventManager,
-        mac_address: str,
-        nax_device_name: str,
-        nax_device_manufacturer: str,
-        nax_device_model: str,
-        nax_device_firmware_version: str,
-        nax_device_serial_number: str,
-        zone_output_key: str,
-        zone_output_data: dict,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-        )
-        self._zone_output_key = zone_output_key
-        self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_casting_active"
-        )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_casting_active"
-        self._attr_icon = "mdi:cast"
-
-        # Initialize sensor attributes
-        zone_based_providers = zone_output_data.get("ZoneBasedProviders", {})
-        self._is_casting_active_update(
-            event_name="", message=zone_based_providers.get("IsCastingActive", False)
-        )
-        self._zone_name_update(
-            event_name="", message=zone_output_data.get("Name", "Unknown")
-        )
-
-        # Subscribe to relevant events
-        api.subscribe(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneBasedProviders/IsCastingActive",
-            self._is_casting_active_update,
-        )
-        api.subscribe(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
-            self._zone_name_update,
-        )
-
-    @callback
-    def _is_casting_active_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the casting active status."""
-        self._attr_is_on = message
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-    @callback
-    def _zone_name_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the zone name."""
-        self._attr_name = f"{message} Casting Active"
-        if self.hass is not None:
-            self.async_write_ha_state()
-
-    async def async_update(self) -> None:
-        """Fetch new state data for this entity."""
-        await super().async_update()
-        await self.api.client.ws_get(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
-        )
-        await self.api.client.ws_get(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneBasedProviders/IsCastingActive"
-        )
-
-
-class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
-    """Representation of a NAX Zone Output Speaker Clipping Sensor."""
-
-    def __init__(
-        self,
-        api: DataEventManager,
-        mac_address: str,
-        nax_device_name: str,
-        nax_device_manufacturer: str,
-        nax_device_model: str,
-        nax_device_firmware_version: str,
-        nax_device_serial_number: str,
-        zone_output_key: str,
-        zone_output_data: dict,
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-        )
-        self._zone_output_key = zone_output_key
-        self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_speaker_clipping_detected"
-        )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_speaker_clipping_detected"
-        self._attr_icon = "mdi:alert-octagon"
-
-        # Initialize sensor attributes
+        # Initialize number entity attributes
         zone_audio = zone_output_data.get("ZoneAudio", {})
-        speaker_faults = zone_audio.get("Speaker", {}).get("Faults", {})
-        self._is_clipping_detected_update(
-            event_name="", message=speaker_faults.get("IsClippingDetected", False)
+        self._default_volume_update(
+            event_name="", message=zone_audio.get("DefaultVolume", 0)
         )
         self._zone_name_update(
             event_name="", message=zone_output_data.get("Name", "Unknown")
@@ -539,8 +330,8 @@ class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
 
         # Subscribe to relevant events
         api.subscribe(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/Speaker/Faults/IsClippingDetected",
-            self._is_clipping_detected_update,
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/DefaultVolume",
+            self._default_volume_update,
         )
         api.subscribe(
             f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
@@ -548,18 +339,39 @@ class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
         )
 
     @callback
-    def _is_clipping_detected_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the speaker clipping detection."""
-        self._attr_is_on = message
+    def _default_volume_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the default volume."""
+        # Convert from 0-1000 range to 0-100 percentage
+        self._attr_native_value = message / 10.0
         if self.hass is not None:
             self.async_write_ha_state()
 
     @callback
     def _zone_name_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the zone name."""
-        self._attr_name = f"{message} Speaker Clipping Detected"
+        self._attr_name = f"{message} Default Volume"
         if self.hass is not None:
             self.async_write_ha_state()
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the default volume."""
+        # Convert from 0-100 percentage to 0-1000 range
+        device_value = int(value * 10)
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            self._zone_output_key: {
+                                "ZoneAudio": {
+                                    "DefaultVolume": device_value
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
 
     async def async_update(self) -> None:
         """Fetch new state data for this entity."""
@@ -568,5 +380,213 @@ class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
             f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
         )
         await self.api.client.ws_get(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/Speaker/Faults/IsClippingDetected"
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/DefaultVolume"
+        )
+
+
+class NaxZoneMinVolumeNumber(NaxEntity, NumberEntity):
+    """Representation of a NAX Zone Minimum Volume Number Entity."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = 0
+    _attr_native_max_value = 50
+    _attr_native_step = 0.1
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        zone_output_key: str,
+        zone_output_data: dict,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._zone_output_key = zone_output_key
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{zone_output_key}_min_volume"
+        )
+        self.entity_id = f"number.{format_mac(mac_address)}_{zone_output_key.lower()}_min_volume"
+        self._attr_icon = "mdi:volume-low"
+        self._attr_native_unit_of_measurement = "%"
+
+        # Initialize number entity attributes
+        zone_audio = zone_output_data.get("ZoneAudio", {})
+        self._min_volume_update(
+            event_name="", message=zone_audio.get("MinVolume", 0)
+        )
+        self._zone_name_update(
+            event_name="", message=zone_output_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/MinVolume",
+            self._min_volume_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
+            self._zone_name_update,
+        )
+
+    @callback
+    def _min_volume_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the minimum volume."""
+        # Convert from 0-500 range to 0-50 percentage
+        self._attr_native_value = message / 10.0
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone name."""
+        self._attr_name = f"{message} Minimum Volume"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the minimum volume."""
+        # Convert from 0-50 percentage to 0-500 range
+        device_value = int(value * 10)
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            self._zone_output_key: {
+                                "ZoneAudio": {
+                                    "MinVolume": device_value
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/MinVolume"
+        )
+
+
+class NaxZoneMaxVolumeNumber(NaxEntity, NumberEntity):
+    """Representation of a NAX Zone Maximum Volume Number Entity."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = 70
+    _attr_native_max_value = 100
+    _attr_native_step = 0.1
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        zone_output_key: str,
+        zone_output_data: dict,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._zone_output_key = zone_output_key
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{zone_output_key}_max_volume"
+        )
+        self.entity_id = f"number.{format_mac(mac_address)}_{zone_output_key.lower()}_max_volume"
+        self._attr_icon = "mdi:volume-high"
+        self._attr_native_unit_of_measurement = "%"
+
+        # Initialize number entity attributes
+        zone_audio = zone_output_data.get("ZoneAudio", {})
+        self._max_volume_update(
+            event_name="", message=zone_audio.get("MaxVolume", 1000)
+        )
+        self._zone_name_update(
+            event_name="", message=zone_output_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/MaxVolume",
+            self._max_volume_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
+            self._zone_name_update,
+        )
+
+    @callback
+    def _max_volume_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the maximum volume."""
+        # Convert from 700-1000 range to 70-100 percentage
+        self._attr_native_value = message / 10.0
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone name."""
+        self._attr_name = f"{message} Maximum Volume"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the maximum volume."""
+        # Convert from 70-100 percentage to 700-1000 range
+        device_value = int(value * 10)
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ZoneOutputs": {
+                        "Zones": {
+                            self._zone_output_key: {
+                                "ZoneAudio": {
+                                    "MaxVolume": device_value
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/MaxVolume"
         )
