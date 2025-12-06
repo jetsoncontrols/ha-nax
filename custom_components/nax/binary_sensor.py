@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -300,6 +301,7 @@ class NaxInputClippingBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_clipping_detected"
         self._attr_icon = "mdi:alert-octagon"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
         # Initialize sensor attributes
         self._is_clipping_detected_update(
@@ -526,6 +528,7 @@ class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_speaker_clipping_detected"
         self._attr_icon = "mdi:alert-octagon"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
         # Initialize sensor attributes
         zone_audio = zone_output_data.get("ZoneAudio", {})
