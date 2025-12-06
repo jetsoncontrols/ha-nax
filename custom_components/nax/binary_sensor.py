@@ -173,6 +173,24 @@ async def async_setup_entry(
         ]
     )
 
+    entities_to_add.extend(
+        [
+            NaxZoneOutputSpeakerClippingBinarySensor(
+                api=api,
+                mac_address=mac_address,
+                nax_device_name=nax_device_name,
+                nax_device_manufacturer=nax_device_manufacturer,
+                nax_device_model=nax_device_model,
+                nax_device_firmware_version=nax_device_firmware_version,
+                nax_device_serial_number=nax_device_serial_number,
+                zone_output_key=zone_output,
+                zone_output_data=zone_outputs[zone_output],
+            )
+            for zone_output in zone_outputs
+            if zone_outputs[zone_output].get("ZoneAudio", {}).get("IsAmplificationSupported", False)
+        ]
+    )
+
     async_add_entities(entities_to_add)
 
 
@@ -474,4 +492,81 @@ class NaxZoneOutputCastingBinarySensor(NaxEntity, BinarySensorEntity):
         )
         await self.api.client.ws_get(
             f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneBasedProviders/IsCastingActive"
+        )
+
+
+class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
+    """Representation of a NAX Zone Output Speaker Clipping Sensor."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        zone_output_key: str,
+        zone_output_data: dict,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._zone_output_key = zone_output_key
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{zone_output_key}_speaker_clipping_detected"
+        )
+        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_speaker_clipping_detected"
+        self._attr_icon = "mdi:alert-octagon"
+
+        # Initialize sensor attributes
+        zone_audio = zone_output_data.get("ZoneAudio", {})
+        speaker_faults = zone_audio.get("Speaker", {}).get("Faults", {})
+        self._is_clipping_detected_update(
+            event_name="", message=speaker_faults.get("IsClippingDetected", False)
+        )
+        self._zone_name_update(
+            event_name="", message=zone_output_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/Speaker/Faults/IsClippingDetected",
+            self._is_clipping_detected_update,
+        )
+        api.subscribe(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
+            self._zone_name_update,
+        )
+
+    @callback
+    def _is_clipping_detected_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the speaker clipping detection."""
+        self._attr_is_on = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _zone_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the zone name."""
+        self._attr_name = f"{message} Speaker Clipping Detected"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/Speaker/Faults/IsClippingDetected"
         )
