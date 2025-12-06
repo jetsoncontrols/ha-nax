@@ -124,6 +124,23 @@ async def async_setup_entry(
 
     entities_to_add.extend(
         [
+            NaxInputClippingBinarySensor(
+                api=api,
+                mac_address=mac_address,
+                nax_device_name=nax_device_name,
+                nax_device_manufacturer=nax_device_manufacturer,
+                nax_device_model=nax_device_model,
+                nax_device_firmware_version=nax_device_firmware_version,
+                nax_device_serial_number=nax_device_serial_number,
+                source_input_key=source_input,
+                source_input_data=source_inputs[source_input],
+            )
+            for source_input in source_inputs
+        ]
+    )
+
+    entities_to_add.extend(
+        [
             NaxZoneOutputSignalBinarySensor(
                 api=api,
                 mac_address=mac_address,
@@ -214,6 +231,81 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         await self.api.client.ws_get(
             f"/Device/InputSources/Inputs/{self._source_input_key}/IsSignalPresent"
+        )
+
+
+class NaxInputClippingBinarySensor(NaxEntity, BinarySensorEntity):
+    """Representation of a NAX Input Clipping Sensor."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        source_input_key: str,
+        source_input_data: dict,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._source_input_key = source_input_key
+        self._attr_unique_id = (
+            f"{format_mac(mac_address)}_{source_input_key}_clipping_detected"
+        )
+        self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_clipping_detected"
+        self._attr_icon = "mdi:alert-octagon"
+
+        # Initialize sensor attributes
+        self._is_clipping_detected_update(
+            event_name="", message=source_input_data.get("IsClippingDetected", False)
+        )
+        self._input_name_update(
+            event_name="", message=source_input_data.get("Name", "Unknown")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            f"/Device/InputSources/Inputs/{self._source_input_key}/IsClippingDetected",
+            self._is_clipping_detected_update,
+        )
+        api.subscribe(
+            f"/Device/InputSources/Inputs/{self._source_input_key}/Name",
+            self._input_name_update,
+        )
+
+    @callback
+    def _is_clipping_detected_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the clipping detection."""
+        self._attr_is_on = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    @callback
+    def _input_name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the input name."""
+        self._attr_name = f"{message} Clipping Detected"
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/InputSources/Inputs/{self._source_input_key}/Name"
+        )
+        await self.api.client.ws_get(
+            f"/Device/InputSources/Inputs/{self._source_input_key}/IsClippingDetected"
         )
 
 
