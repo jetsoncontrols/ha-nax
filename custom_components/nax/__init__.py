@@ -27,7 +27,8 @@ PLATFORMS = sorted(
         Platform.SELECT,
         Platform.BINARY_SENSOR,
         Platform.SIREN,
-        Platform.NUMBER
+        Platform.NUMBER,
+        Platform.SWITCH
     ]
 )
 

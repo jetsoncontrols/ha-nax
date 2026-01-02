@@ -14,6 +14,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
@@ -106,6 +107,13 @@ async def async_setup_entry(
         .get("NaxRx", {})
     )
 
+    tone_generator = (
+        (await api.client.http_get("/Device/ToneGenerator") or {})
+        .get("content", {})
+        .get("Device", {})
+        .get("ToneGenerator", {})
+    )
+
     if not all(
         [
             mac_address,
@@ -117,12 +125,27 @@ async def async_setup_entry(
             zone_outputs,
             nax_sdp_streams is not None,
             nax_rx,
+            tone_generator is not None,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
         return
 
     entities_to_add = []
+
+    # Add tone generator mode select entity (one per device)
+    entities_to_add.append(
+        NaxToneGeneratorModeSelect(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+            tone_generator_data=tone_generator,
+        )
+    )
 
     # Only create select entities for zones that have AES67 receivers
     for zone_output in zone_outputs:
@@ -346,3 +369,74 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
         if not stream_arg:
             return ""
         return stream_arg.split(" (", 1)[1][:-1]
+
+
+class NaxToneGeneratorModeSelect(NaxEntity, SelectEntity):
+    """Representation of a NAX Tone Generator Mode Select."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        tone_generator_data: dict,
+    ) -> None:
+        """Initialize the select entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+
+        # Initialize attributes
+        self._attr_unique_id = f"{format_mac(mac_address)}_tone_generator_mode"
+        self.entity_id = f"select.{self._attr_unique_id}"
+        self._attr_name = f"{nax_device_name} Tone Generator Mode"
+        self._attr_icon = "mdi:sine-wave"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_options = ["Tone", "WhiteNoise", "PinkNoise"]
+        self._tone_generator_mode_update(
+            event_name="", message=tone_generator_data.get("Mode", "Tone")
+        )
+
+        # Subscribe to relevant events
+        api.subscribe(
+            "/Device/ToneGenerator/Mode",
+            self._tone_generator_mode_update,
+        )
+
+    @callback
+    def _tone_generator_mode_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the tone generator mode."""
+        self._attr_current_option = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the tone generator mode."""
+        if option not in self._attr_options:
+            _LOGGER.error("Invalid option selected: %s", option)
+            return
+
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "ToneGenerator": {
+                        "Mode": option
+                    }
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get("/Device/ToneGenerator/Mode")

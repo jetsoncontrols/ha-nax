@@ -2,5 +2,5 @@
   "name": "NAX",
   "country": ["US"],
   "render_readme": true,
-  "domains": ["media_player", "select", "binary_sensor", "siren"]
+  "domains": ["media_player", "select", "binary_sensor", "siren", "number", "switch"]
 }
