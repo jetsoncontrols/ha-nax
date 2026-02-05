@@ -177,7 +177,7 @@ class NaxToneGeneratorLeftChannelSwitch(NaxEntity, SwitchEntity):
 
         # Initialize attributes
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_tone_generator_left_channel"
+            f"{mac_address.replace(":", "_")}_tone_generator_left_channel"
         )
         self.entity_id = f"switch.{self._attr_unique_id}"
         self._attr_name = f"{nax_device_name} Tone Generator Left Channel"
@@ -246,7 +246,7 @@ class NaxToneGeneratorRightChannelSwitch(NaxEntity, SwitchEntity):
 
         # Initialize attributes
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_tone_generator_right_channel"
+            f"{mac_address.replace(":", "_")}_tone_generator_right_channel"
         )
         self.entity_id = f"switch.{self._attr_unique_id}"
         self._attr_name = f"{nax_device_name} Tone Generator Right Channel"
@@ -316,7 +316,7 @@ class NaxZoneTestToneSwitch(NaxEntity, SwitchEntity):
         self._zone_output_key = zone_output_key
 
         # Initialize attributes
-        self._attr_unique_id = f"{format_mac(mac_address)}_{zone_output_key}_test_tone"
+        self._attr_unique_id = f"{mac_address.replace(":", "_")}_{zone_output_key}_test_tone"
         self.entity_id = f"switch.{self._attr_unique_id}"
         self._attr_icon = "mdi:sine-wave"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC

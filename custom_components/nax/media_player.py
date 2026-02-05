@@ -195,7 +195,7 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         self._nax_tx = nax_tx_data
 
         # Initialize media player attributes
-        self._attr_unique_id = f"{format_mac(mac_address)}_{zone_output_key.lower()}"
+        self._attr_unique_id = f"{mac_address.replace(':', '_')}_{zone_output_key.lower()}"
         self.entity_id = f"media_player.{self._attr_unique_id}"
         self._attr_entity_registry_visible_default = True
         self._attr_icon = "mdi:audio-video"

@@ -212,7 +212,7 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
 
         # Initialize attributes
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_aes67_stream"
+            f"{mac_address.replace(':', '_')}_{zone_output_key}_aes67_stream"
         )
         self.entity_id = f"select.{self._attr_unique_id}"
         self._attr_entity_registry_visible_default = True
@@ -397,7 +397,7 @@ class NaxToneGeneratorModeSelect(NaxEntity, SelectEntity):
         )
 
         # Initialize attributes
-        self._attr_unique_id = f"{format_mac(mac_address)}_tone_generator_mode"
+        self._attr_unique_id = f"{mac_address.replace(':', '_')}_tone_generator_mode"
         self.entity_id = f"select.{self._attr_unique_id}"
         self._attr_name = f"{nax_device_name} Tone Generator Mode"
         self._attr_icon = "mdi:sine-wave"

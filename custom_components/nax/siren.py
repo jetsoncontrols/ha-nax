@@ -127,7 +127,7 @@ class NaxSiren(NaxEntity, SirenEntity):
         )
 
         self._attr_name = f"{nax_device_name} Chime"
-        self._attr_unique_id = f"{format_mac(mac_address)}_siren"
+        self._attr_unique_id = f"{mac_address.replace(":", "_")}_siren"
         self.entity_id = f"siren.{self._attr_unique_id}"
 
         # Enable tone support
