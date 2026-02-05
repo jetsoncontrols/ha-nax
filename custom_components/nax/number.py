@@ -249,9 +249,8 @@ class NaxInputCompensationNumber(NaxEntity, NumberEntity):
         )
         self._source_input_key = source_input_key
         self._attr_unique_id = (
-            f"{mac_address.replace(":", "_")}_{source_input_key}_compensation"
+            f"{mac_address.replace(":", "_").replace(".", "_")}_{source_input_key}_compensation"
         )
-        self.entity_id = f"number.{mac_address.replace(":", "_")}_{source_input_key.lower()}_compensation"
         self._attr_icon = "mdi:tune"
         self._attr_native_unit_of_measurement = "dB"
 
@@ -353,9 +352,8 @@ class NaxZoneDefaultVolumeNumber(NaxEntity, NumberEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{mac_address.replace(":", "_")}_{zone_output_key}_default_volume"
+            f"{mac_address.replace(":", "_").replace(".", "_")}_{zone_output_key}_default_volume"
         )
-        self.entity_id = f"number.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_default_volume"
         self._attr_icon = "mdi:volume-high"
         self._attr_native_unit_of_measurement = "%"
 
@@ -457,9 +455,8 @@ class NaxZoneMinVolumeNumber(NaxEntity, NumberEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{mac_address.replace(":", "_")}_{zone_output_key}_min_volume"
+            f"{mac_address.replace(":", "_").replace(".", "_")}_{zone_output_key}_min_volume"
         )
-        self.entity_id = f"number.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_min_volume"
         self._attr_icon = "mdi:volume-low"
         self._attr_native_unit_of_measurement = "%"
 
@@ -561,9 +558,8 @@ class NaxZoneMaxVolumeNumber(NaxEntity, NumberEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{mac_address.replace(":", "_")}_{zone_output_key}_max_volume"
+            f"{mac_address.replace(":", "_").replace(".", "_")}_{zone_output_key}_max_volume"
         )
-        self.entity_id = f"number.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_max_volume"
         self._attr_icon = "mdi:volume-high"
         self._attr_native_unit_of_measurement = "%"
 
@@ -662,8 +658,7 @@ class NaxToneGeneratorFrequencyNumber(NaxEntity, NumberEntity):
             nax_device_firmware_version=nax_device_firmware_version,
             nax_device_serial_number=nax_device_serial_number,
         )
-        self._attr_unique_id = f"{mac_address.replace(":", "_")}_tone_generator_frequency"
-        self.entity_id = f"number.{self._attr_unique_id}"
+        self._attr_unique_id = f"{mac_address.replace(":", "_").replace(".", "_")}_tone_generator_frequency"
         self._attr_icon = "mdi:sine-wave"
         self._attr_native_unit_of_measurement = "Hz"
         self._attr_name = f"{nax_device_name} Tone Generator Frequency"
@@ -737,9 +732,8 @@ class NaxZoneTestToneVolumeNumber(NaxEntity, NumberEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{mac_address.replace(":", "_")}_{zone_output_key}_test_tone_volume"
+            f"{mac_address.replace(":", "_").replace(".", "_")}_{zone_output_key}_test_tone_volume"
         )
-        self.entity_id = f"number.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_test_tone_volume"
         self._attr_icon = "mdi:sine-wave"
         self._attr_native_unit_of_measurement = "%"
 
