@@ -222,9 +222,9 @@ class NaxInputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._source_input_key = source_input_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{source_input_key}_signal_present"
+            f"{mac_address.replace(":", "_")}_{source_input_key}_signal_present"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_signal_present"
+        self.entity_id = f"sensor.{mac_address.replace(":", "_")}_{source_input_key.lower()}_signal_present"
         self._attr_icon = "mdi:waveform"
 
         # Initialize media player attributes
@@ -297,9 +297,9 @@ class NaxInputClippingBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._source_input_key = source_input_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{source_input_key}_clipping_detected"
+            f"{mac_address.replace(":", "_")}_{source_input_key}_clipping_detected"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{source_input_key.lower()}_clipping_detected"
+        self.entity_id = f"sensor.{mac_address.replace(":", "_")}_{source_input_key.lower()}_clipping_detected"
         self._attr_icon = "mdi:alert-octagon"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -373,9 +373,9 @@ class NaxZoneOutputSignalBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_signal_detected"
+            f"{mac_address.replace(":", "_")}_{zone_output_key}_signal_detected"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_signal_detected"
+        self.entity_id = f"sensor.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_signal_detected"
         self._attr_icon = "mdi:waveform"
 
         # Initialize sensor attributes
@@ -448,9 +448,9 @@ class NaxZoneOutputCastingBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_casting_active"
+            f"{mac_address.replace(":", "_")}_{zone_output_key}_casting_active"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_casting_active"
+        self.entity_id = f"sensor.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_casting_active"
         self._attr_icon = "mdi:cast"
 
         # Initialize sensor attributes
@@ -524,9 +524,9 @@ class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
         )
         self._zone_output_key = zone_output_key
         self._attr_unique_id = (
-            f"{format_mac(mac_address)}_{zone_output_key}_speaker_clipping_detected"
+            f"{mac_address.replace(":", "_")}_{zone_output_key}_speaker_clipping_detected"
         )
-        self.entity_id = f"sensor.{format_mac(mac_address)}_{zone_output_key.lower()}_speaker_clipping_detected"
+        self.entity_id = f"sensor.{mac_address.replace(":", "_")}_{zone_output_key.lower()}_speaker_clipping_detected"
         self._attr_icon = "mdi:alert-octagon"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
