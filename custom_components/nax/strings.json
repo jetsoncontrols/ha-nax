@@ -10,6 +10,14 @@
           "password": "Password"
         }
       },
+      "discovery_confirm": {
+        "title": "NAX Device Discovered",
+        "description": "A NAX device was found at **{host}** ({hostname}). Please enter credentials to set it up.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
       "reconfigure": {
         "title": "NAX Configuration",
         "description": "Please enter the IP, Username and Password",
