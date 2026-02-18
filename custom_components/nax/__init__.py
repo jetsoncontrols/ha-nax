@@ -63,6 +63,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception as err:
         raise ConfigEntryNotReady(f"Failed to connect to NAX: {err}") from err
     await api.start_monitoring()
+
+    # Backfill unique_id for entries created before discovery was added
+    if not entry.unique_id:
+        mac_response = await api.client.http_get("/Device/DeviceInfo/MacAddress")
+        if mac_response and "content" in mac_response:
+            mac = (
+                mac_response["content"]
+                .get("Device", {})
+                .get("DeviceInfo", {})
+                .get("MacAddress")
+            )
+            if mac:
+                mac = mac.upper()
+                if ":" not in mac and len(mac) == 12:
+                    mac = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
+                hass.config_entries.async_update_entry(entry, unique_id=mac)
+
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info("Successfully set up NAX entities for %s", entry.title)
