@@ -55,6 +55,12 @@ class NaxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered_hostname = discovery_info.hostname.upper()
         self._discovered_mac = mac
 
+        # Abort if any existing entry already uses this host (covers legacy
+        # entries that were created before unique_id backfill)
+        for entry in self._async_current_entries():
+            if entry.data.get(CONF_HOST) == self._discovered_host:
+                return self.async_abort(reason="already_configured")
+
         await self.async_set_unique_id(mac)
         self._abort_if_unique_id_configured(
             updates={CONF_HOST: self._discovered_host}
