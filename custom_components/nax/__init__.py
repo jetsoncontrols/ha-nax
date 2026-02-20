@@ -107,7 +107,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.debug("Removing NAX config entry %s", entry.entry_id)
 
     # Safely get and remove the API client if it exists
-    api: DataEventManager = hass.data[DOMAIN].pop(entry.entry_id, None)
+    api: DataEventManager = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
 
     if api is not None:
         await api.stop_monitoring()
