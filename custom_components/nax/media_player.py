@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any
+
+from homeassistant.util.dt import utcnow
 
 import deepmerge
 
@@ -24,6 +25,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
+from .mp2 import NaxMP2Client
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -136,6 +138,9 @@ async def async_setup_entry(
         _LOGGER.error("Could not retrieve required NAX device information")
         return
 
+    # Detect MP2 availability (gracefully returns None if not available)
+    mp2_info = await NaxMP2Client.detect(api.client, zone_outputs, input_sources)
+
     entities_to_add = [
         NaxMediaPlayer(
             api=api,
@@ -151,6 +156,15 @@ async def async_setup_entry(
             zone_matrix_data=matrix_routes.get(zone_output, {}),
             nax_tx_data=nax_tx,
             store=store,
+            mp2_player_id=(
+                mp2_info["player_map"].get(zone_output) if mp2_info else None
+            ),
+            mp2_profile_key=(
+                mp2_info["profile_key"] if mp2_info else None
+            ),
+            mp2_streaming_input_key=(
+                mp2_info["streaming_input_map"].get(zone_output) if mp2_info else None
+            ),
         )
         for zone_output in zone_outputs
     ]
@@ -176,6 +190,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         zone_matrix_data: dict,
         nax_tx_data: dict,
         store: Store,
+        mp2_player_id: str | None = None,
+        mp2_profile_key: str | None = None,
+        mp2_streaming_input_key: str | None = None,
     ) -> None:
         """Initialize the media player."""
         super().__init__(
@@ -210,6 +227,25 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             | MediaPlayerEntityFeature.SELECT_SOUND_MODE
         )
         self._attr_volume_step = 0.01
+        # MP2 setup (must be before initial callback invocations)
+        self._mp2: NaxMP2Client | None = None
+        self._mp2_player_id = mp2_player_id
+        self._mp2_streaming_input_key = mp2_streaming_input_key
+        self._mp2_player_state: str | None = None
+        self._mp2_stream_state: str | None = None
+        self._current_audio_source: str = zone_matrix_data.get("AudioSource", "")
+
+        if mp2_player_id and mp2_profile_key:
+            self._mp2 = NaxMP2Client(api.client, mp2_player_id, mp2_profile_key)
+            self._attr_supported_features |= (
+                MediaPlayerEntityFeature.PLAY
+                | MediaPlayerEntityFeature.PAUSE
+                | MediaPlayerEntityFeature.NEXT_TRACK
+                | MediaPlayerEntityFeature.PREVIOUS_TRACK
+                | MediaPlayerEntityFeature.SEEK
+            )
+
+        # Initialize state from device data
         self._zone_name_update(event_name="", message=zone_output_data.get("Name", ""))
         self._zone_volume_update(
             event_name="",
@@ -304,13 +340,12 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
     def _zone_matrix_audiosource_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the zone matrix audio source."""
         zone_audio_source_key = message.get("AudioSource", "")
+        self._current_audio_source = zone_audio_source_key
         zone_audio_source_name, zone_audio_source_aes67_address = (
             self.__get_source_name_and_address_by_key(zone_audio_source_key)
         )
 
         if zone_audio_source_key and zone_audio_source_name:
-            self._attr_state = MediaPlayerState.PLAYING
-            self._attr_media_content_type = MediaType.MUSIC
             self._attr_source = self.__mux_source_name(
                 input_source_key=zone_audio_source_key,
                 input_source_name=zone_audio_source_name,
@@ -320,9 +355,9 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
                 self.__async_save_store_last_input(zone_audio_source_key)
             )
         else:
-            self._attr_state = MediaPlayerState.OFF
-            self._attr_media_content_type = None
             self._attr_source = None
+
+        self._update_state_from_context()
 
         if self.hass is not None:
             self.async_write_ha_state()
@@ -361,6 +396,89 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             )
         if self.hass is not None:
             self.async_write_ha_state()
+
+    @callback
+    def _mp2_player_update(self, event_name: str, message: Any) -> None:
+        """Handle push events from the MP2 player."""
+        if message is None:
+            return
+
+        player_data = (
+            message.get("Device", {})
+            .get("MediaPlayerNeXt", {})
+            .get("Players", {})
+            .get(self._mp2_player_id, {})
+        )
+        if not player_data:
+            return
+
+        # Track player and stream state
+        if "PlayerState" in player_data:
+            self._mp2_player_state = player_data["PlayerState"]
+        if "StreamState" in player_data:
+            self._mp2_stream_state = player_data["StreamState"]
+
+        # Extract NowPlayingData
+        now_playing = player_data.get("Player", {}).get("NowPlayingData", {})
+        if now_playing:
+            title = now_playing.get("TrackTitle", "").strip()
+            artist = now_playing.get("ArtistName", "").strip()
+            album = now_playing.get("AlbumName", "").strip()
+            art_url = now_playing.get("AlbumArtUrl", "").strip()
+            duration = now_playing.get("Duration")
+            elapsed = now_playing.get("ElapsedSec")
+
+            self._attr_media_title = title if title else None
+            self._attr_media_artist = artist if artist else None
+            self._attr_media_album_name = album if album else None
+            self._attr_media_image_url = art_url if art_url else None
+            if isinstance(duration, (int, float)) and duration > 0:
+                self._attr_media_duration = duration
+            else:
+                self._attr_media_duration = None
+            if isinstance(elapsed, (int, float)):
+                self._attr_media_position = elapsed
+                self._attr_media_position_updated_at = utcnow()
+            else:
+                self._attr_media_position = None
+
+        # Update entity state based on current audio source
+        self._update_state_from_context()
+
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    def _update_state_from_context(self) -> None:
+        """Derive entity state from the current audio source and MP2 player state."""
+        if not self._current_audio_source:
+            # No input routed
+            self._attr_state = MediaPlayerState.OFF
+            self._attr_media_content_type = None
+            return
+
+        if (
+            self._mp2
+            and self._current_audio_source == self._mp2_streaming_input_key
+        ):
+            # Zone is on its streaming input — state follows MP2 player
+            self._attr_media_content_type = MediaType.MUSIC
+            if self._mp2_player_state == "playing":
+                self._attr_state = MediaPlayerState.PLAYING
+            elif self._mp2_player_state == "paused":
+                self._attr_state = MediaPlayerState.PAUSED
+            else:
+                self._attr_state = MediaPlayerState.IDLE
+        else:
+            # Zone is on a non-streaming input — playing as before
+            self._attr_state = MediaPlayerState.PLAYING
+            self._attr_media_content_type = MediaType.MUSIC
+            # Clear MP2 media attributes when not on streaming input
+            self._attr_media_title = None
+            self._attr_media_artist = None
+            self._attr_media_album_name = None
+            self._attr_media_image_url = None
+            self._attr_media_duration = None
+            self._attr_media_position = None
 
     async def async_select_source(self, source: str) -> None:
         """Select input source."""
@@ -464,6 +582,85 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
             }
         )
 
+    def _schedule_mp2_refresh(self, delay: float = 1.0) -> None:
+        """Schedule a delayed MP2 state refresh via HTTP poll."""
+        if not self._mp2 or not self._mp2_player_id or self.hass is None:
+            return
+
+        async def _do_refresh(_now=None) -> None:
+            resp = await self.api.client.http_get(
+                f"/Device/MediaPlayerNeXt/Players/{self._mp2_player_id}"
+            )
+            if resp:
+                self._mp2_player_update(
+                    event_name="",
+                    message=resp.get("content", {}),
+                )
+
+        self.hass.loop.call_later(
+            delay, lambda: asyncio.ensure_future(_do_refresh())
+        )
+
+    def _set_mp2_state_optimistic(self, state: str) -> None:
+        """Optimistically set the MP2 player state and update entity."""
+        self._mp2_player_state = state
+        self._update_state_from_context()
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_play_media(
+        self, media_type: str, media_id: str, **kwargs: Any
+    ) -> None:
+        """Play media from a URL."""
+        if self._mp2 is None:
+            _LOGGER.warning("MP2 not available for %s", self.name)
+            return
+        # Route zone to its streaming input if not already there
+        if self._current_audio_source != self._mp2_streaming_input_key:
+            await self.__set_zone_audio_matrix_route(self._mp2_streaming_input_key)
+        await self._mp2.load_source(media_id)
+        self._set_mp2_state_optimistic("playing")
+        self._schedule_mp2_refresh(delay=2.0)
+
+    async def async_media_play(self) -> None:
+        """Send play command."""
+        if self._mp2 is None:
+            return
+        await self._mp2.play()
+        self._set_mp2_state_optimistic("playing")
+        self._schedule_mp2_refresh()
+
+    async def async_media_pause(self) -> None:
+        """Send pause command."""
+        if self._mp2 is None:
+            return
+        await self._mp2.pause()
+        self._set_mp2_state_optimistic("paused")
+        self._schedule_mp2_refresh()
+
+    async def async_media_next_track(self) -> None:
+        """Send next track command."""
+        if self._mp2 is None:
+            return
+        await self._mp2.next_track()
+        self._set_mp2_state_optimistic("playing")
+        self._schedule_mp2_refresh(delay=2.0)
+
+    async def async_media_previous_track(self) -> None:
+        """Send previous track command."""
+        if self._mp2 is None:
+            return
+        await self._mp2.previous_track()
+        self._set_mp2_state_optimistic("playing")
+        self._schedule_mp2_refresh(delay=2.0)
+
+    async def async_media_seek(self, position: float) -> None:
+        """Send seek command."""
+        if self._mp2 is None:
+            return
+        await self._mp2.seek(position)
+        self._schedule_mp2_refresh()
+
     async def async_update(self) -> None:
         """Fetch new state data for this entity."""
         await super().async_update()
@@ -484,6 +681,10 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         await self.api.client.ws_get(
             f"/Device/AvMatrixRouting/Routes/{self._zone_output_key}"
         )
+        if self._mp2 and self._mp2_player_id:
+            await self.api.client.ws_get(
+                f"/Device/MediaPlayerNeXt/Players/{self._mp2_player_id}"
+            )
 
     # Helper methods
     async def __set_zone_audio_matrix_route(self, input_source_key: str) -> None:
