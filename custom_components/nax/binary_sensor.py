@@ -6,7 +6,10 @@ import logging
 from typing import Any
 
 from cresnextws import DataEventManager
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -87,6 +90,16 @@ async def async_setup_entry(
         "content", "Device", "ZoneOutputs", "Zones", default={}
     )
 
+    avio_v2_inputs = safe_get(
+        await api.client.http_get("/Device/AvioV2/Inputs") or {},
+        "content", "Device", "AvioV2", "Inputs", default={}
+    )
+
+    avio_v2_outputs = safe_get(
+        await api.client.http_get("/Device/AvioV2/Outputs") or {},
+        "content", "Device", "AvioV2", "Outputs", default={}
+    )
+
     if not all(
         [
             mac_address,
@@ -159,6 +172,29 @@ async def async_setup_entry(
             for zone_output in zone_outputs
             if zone_outputs[zone_output].get("ZoneAudio", {}).get("IsAmplificationSupported", False)
         )
+
+    # HDMI link-state sensors (AvioV2 HDMI inputs/outputs — XSP-style devices)
+    # Inputs expose IsSyncDetected, outputs expose IsSinkConnected.
+    for direction, info_key, ports_dict in (
+        ("Input", "InputInfo", avio_v2_inputs),
+        ("Output", "OutputInfo", avio_v2_outputs),
+    ):
+        field = _HDMI_LINK_BY_DIRECTION[direction][0]
+        for port_key, port_data in ports_dict.items():
+            if not isinstance(port_data, dict):
+                continue
+            port = port_data.get(info_key, {}).get("Ports", {}).get("Port1", {})
+            if port.get("PortType") != "Hdmi":
+                continue
+            entities_to_add.append(
+                NaxHdmiLinkBinarySensor(
+                    **device_params,
+                    direction=direction,
+                    port_key=port_key,
+                    port_name=port_data.get("UserSpecifiedName", port_key),
+                    initial_value=port.get(field),
+                )
+            )
 
     async_add_entities(entities_to_add)
 
@@ -536,3 +572,78 @@ class NaxZoneOutputSpeakerClippingBinarySensor(NaxEntity, BinarySensorEntity):
         await self.api.client.ws_get(
             f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/Speaker/Faults/IsClippingDetected"
         )
+
+
+_HDMI_LINK_BY_DIRECTION: dict[str, tuple[str, str, str]] = {
+    # direction -> (field_name, label, unique_id_suffix)
+    "Input": ("IsSyncDetected", "Sync Detected", "hdmi_sync_detected"),
+    "Output": ("IsSinkConnected", "Sink Connected", "hdmi_sink_connected"),
+}
+
+
+class NaxHdmiLinkBinarySensor(NaxEntity, BinarySensorEntity):
+    """Diagnostic binary sensor for an HDMI port's link state.
+
+    Reports ``IsSyncDetected`` on inputs and ``IsSinkConnected`` on outputs
+    — both are Boolean "is the HDMI link alive" indicators.
+    """
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        direction: str,
+        port_key: str,
+        port_name: str,
+        initial_value: Any,
+    ) -> None:
+        """Initialize the binary sensor."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        field, label, uid_suffix = _HDMI_LINK_BY_DIRECTION[direction]
+        self._direction = direction
+        self._port_key = port_key
+        self._field = field
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}"
+            f"_{port_key}_{uid_suffix}"
+        )
+        self._attr_name = f"{nax_device_name} {direction} {port_name} {label}"
+        self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_registry_visible_default = True
+        self._link_update(event_name="", message=initial_value)
+
+        api.subscribe(self.__path, self._link_update)
+
+    @property
+    def __path(self) -> str:
+        return (
+            f"/Device/AvioV2/{self._direction}s/{self._port_key}"
+            f"/{self._direction}Info/Ports/Port1/{self._field}"
+        )
+
+    @callback
+    def _link_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the HDMI link state."""
+        self._attr_is_on = bool(message) if message is not None else None
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(self.__path)

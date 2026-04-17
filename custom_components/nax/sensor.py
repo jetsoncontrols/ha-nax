@@ -210,6 +210,27 @@ async def async_setup_entry(
                     )
                 )
 
+    # HDMI resolution sensors (AvioV2 HDMI inputs + outputs — XSP-style devices)
+    for direction, info_key, ports_dict in (
+        ("Input", "InputInfo", avio_v2_inputs),
+        ("Output", "OutputInfo", avio_v2_outputs),
+    ):
+        for port_key, port_data in ports_dict.items():
+            if not isinstance(port_data, dict):
+                continue
+            port = port_data.get(info_key, {}).get("Ports", {}).get("Port1", {})
+            if port.get("PortType") != "Hdmi":
+                continue
+            entities_to_add.append(
+                NaxHdmiResolutionSensor(
+                    **device_params,
+                    direction=direction,
+                    port_key=port_key,
+                    port_name=port_data.get("UserSpecifiedName", port_key),
+                    initial_value=port.get("CurrentResolution"),
+                )
+            )
+
     async_add_entities(entities_to_add)
 
 
@@ -335,6 +356,71 @@ class NaxPortAudioSensor(NaxEntity, SensorEntity):
     @callback
     def _field_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the audio field value."""
+        self._attr_native_value = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(self.__path)
+
+
+class NaxHdmiResolutionSensor(NaxEntity, SensorEntity):
+    """Diagnostic sensor for an AvioV2 HDMI port's CurrentResolution.
+
+    Works for both inputs and outputs via the ``direction`` parameter.
+    """
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        direction: str,
+        port_key: str,
+        port_name: str,
+        initial_value: Any,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._direction = direction
+        self._port_key = port_key
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}"
+            f"_{port_key}_hdmi_resolution"
+        )
+        self._attr_name = f"{nax_device_name} {direction} {port_name} Resolution"
+        self._attr_icon = "mdi:television"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_registry_visible_default = True
+        self._resolution_update(event_name="", message=initial_value)
+
+        api.subscribe(self.__path, self._resolution_update)
+
+    @property
+    def __path(self) -> str:
+        return (
+            f"/Device/AvioV2/{self._direction}s/{self._port_key}"
+            f"/{self._direction}Info/Ports/Port1/CurrentResolution"
+        )
+
+    @callback
+    def _resolution_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the HDMI resolution value."""
         self._attr_native_value = message
         if self.hass is not None:
             self.async_write_ha_state()
