@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 import logging
 import socket
 from typing import Any
@@ -18,10 +19,34 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY
+from .const import (
+    DOMAIN,
+    STORAGE_LAST_AES67_STREAM_KEY,
+    STORAGE_LAST_BTS_STREAM_KEY,
+    safe_get,
+)
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class NaxStreamEncoding(Enum):
+    """Network encoding format reported by NAX RX receivers and SDP announcements.
+
+    Enum value is the exact string the device returns in ``EncodingFormat`` on
+    ``NaxRxStreams`` and ``NaxSdpStreams``. (Transmitters label BTS as ``PCM``
+    instead — this enum tracks the receiver/SDP side, which is what selection
+    logic compares against.) Enum name doubles as the user-facing label.
+    """
+
+    AES67 = "Lpcm"
+    BTS = "BTS"
+
+
+_STORAGE_KEY_BY_ENCODING = {
+    NaxStreamEncoding.AES67: STORAGE_LAST_AES67_STREAM_KEY,
+    NaxStreamEncoding.BTS: STORAGE_LAST_BTS_STREAM_KEY,
+}
 
 
 async def async_setup_entry(
@@ -82,36 +107,24 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
-    zone_outputs = (
-        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ZoneOutputs", {})
-        .get("Zones", [])
+    zone_outputs = safe_get(
+        await api.client.http_get("/Device/ZoneOutputs/Zones") or {},
+        "content", "Device", "ZoneOutputs", "Zones", default={}
     )
 
-    nax_sdp_streams = (
-        (await api.client.http_get("/Device/NaxAudio/NaxSdp/NaxSdpStreams") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("NaxAudio", {})
-        .get("NaxSdp", {})
-        .get("NaxSdpStreams", {})
+    nax_sdp_streams = safe_get(
+        await api.client.http_get("/Device/NaxAudio/NaxSdp/NaxSdpStreams") or {},
+        "content", "Device", "NaxAudio", "NaxSdp", "NaxSdpStreams", default={}
     )
 
-    nax_rx = (
-        (await api.client.http_get("/Device/NaxAudio/NaxRx") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("NaxAudio", {})
-        .get("NaxRx", {})
+    nax_rx = safe_get(
+        await api.client.http_get("/Device/NaxAudio/NaxRx") or {},
+        "content", "Device", "NaxAudio", "NaxRx", default={}
     )
 
-    tone_generator = (
-        (await api.client.http_get("/Device/ToneGenerator") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ToneGenerator", {})
+    tone_generator = safe_get(
+        await api.client.http_get("/Device/ToneGenerator") or {},
+        "content", "Device", "ToneGenerator", default={}
     )
 
     if not all(
@@ -122,61 +135,129 @@ async def async_setup_entry(
             nax_device_model,
             nax_device_firmware_version,
             nax_device_serial_number,
-            zone_outputs,
-            nax_sdp_streams is not None,
-            nax_rx,
-            tone_generator is not None,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
         return
 
-    entities_to_add = []
-
-    # Add tone generator mode select entity (one per device)
-    entities_to_add.append(
-        NaxToneGeneratorModeSelect(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-            tone_generator_data=tone_generator,
-        )
+    av_matrix_routing_v2_config = safe_get(
+        await api.client.http_get("/Device/AvMatrixRoutingV2/Config") or {},
+        "content", "Device", "AvMatrixRoutingV2", "Config", default={}
     )
 
-    # Only create select entities for zones that have AES67 receivers
-    for zone_output in zone_outputs:
-        zone_output_data = zone_outputs[zone_output]
-        zone_aes67_receiver_key = zone_output_data.get("NaxRxStream", "")
+    avio_v2_inputs = safe_get(
+        await api.client.http_get("/Device/AvioV2/Inputs") or {},
+        "content", "Device", "AvioV2", "Inputs", default={}
+    )
 
-        if zone_aes67_receiver_key:
+    device_params = {
+        "api": api,
+        "mac_address": mac_address,
+        "nax_device_name": nax_device_name,
+        "nax_device_manufacturer": nax_device_manufacturer,
+        "nax_device_model": nax_device_model,
+        "nax_device_firmware_version": nax_device_firmware_version,
+        "nax_device_serial_number": nax_device_serial_number,
+    }
+
+    entities_to_add: list[SelectEntity] = []
+
+    # Tone generator mode select (standard NAX devices)
+    if tone_generator:
+        entities_to_add.append(
+            NaxToneGeneratorModeSelect(
+                **device_params,
+                tone_generator_data=tone_generator,
+            )
+        )
+
+    # RX stream selects (standard NAX devices with zones — AES67 only; receivers on
+    # these devices are all Lpcm).
+    if zone_outputs and nax_rx:
+        for zone_output in zone_outputs:
+            zone_output_data = zone_outputs[zone_output]
+            zone_aes67_receiver_key = zone_output_data.get("NaxRxStream", "")
+
+            if zone_aes67_receiver_key:
+                zone_rx_data = nax_rx.get("NaxRxStreams", {}).get(
+                    zone_aes67_receiver_key, {}
+                )
+                entities_to_add.append(
+                    NaxRxStreamSelect(
+                        **device_params,
+                        zone_output_key=zone_output,
+                        receiver_key=zone_aes67_receiver_key,
+                        encoding=NaxStreamEncoding.AES67,
+                        initial_name=zone_output_data.get("Name", "Unknown"),
+                        initial_address=zone_rx_data.get("NetworkAddressStatus", ""),
+                        nax_sdp_streams=nax_sdp_streams,
+                        store=store,
+                    )
+                )
+    # RX stream selects (XSP-style devices — no zones; enumerate receivers directly
+    # and emit one entity per supported EncodingFormat).
+    elif nax_rx:
+        for receiver_key, receiver_data in nax_rx.get("NaxRxStreams", {}).items():
+            if not isinstance(receiver_data, dict):
+                continue
+            try:
+                encoding = NaxStreamEncoding(receiver_data.get("EncodingFormat"))
+            except ValueError:
+                continue
             entities_to_add.append(
-                NaxAes67StreamSelect(
-                    api=api,
-                    mac_address=mac_address,
-                    nax_device_name=nax_device_name,
-                    nax_device_manufacturer=nax_device_manufacturer,
-                    nax_device_model=nax_device_model,
-                    nax_device_firmware_version=nax_device_firmware_version,
-                    nax_device_serial_number=nax_device_serial_number,
-                    zone_output_key=zone_output,
-                    zone_output_data=zone_output_data,
-                    zone_nax_rx_data=nax_rx.get("NaxRxStreams", {}).get(
-                        zone_aes67_receiver_key, {}
-                    ),
+                NaxRxStreamSelect(
+                    **device_params,
+                    receiver_key=receiver_key,
+                    encoding=encoding,
+                    initial_name=receiver_key,
+                    initial_address=receiver_data.get("NetworkAddressStatus", ""),
                     nax_sdp_streams=nax_sdp_streams,
                     store=store,
+                )
+            )
+
+    # Input selection selects (XSP devices with AvMatrixRoutingV2 Config)
+    if av_matrix_routing_v2_config and avio_v2_inputs:
+        # Build input key-to-name mapping for audio-routable inputs
+        input_name_map = {}
+        for input_key, input_data in avio_v2_inputs.items():
+            if isinstance(input_data, dict) and input_data.get(
+                "Capabilities", {}
+            ).get("IsAudioRoutingSupported", False):
+                input_name_map[input_key] = input_data.get(
+                    "UserSpecifiedName", input_key
+                )
+
+        for output_key, output_config in av_matrix_routing_v2_config.items():
+            if not isinstance(output_config, dict):
+                continue
+
+            entities_to_add.append(
+                NaxInputSelectionSelect(
+                    **device_params,
+                    output_key=output_key,
+                    input_name_map=input_name_map,
+                    current_source=output_config.get(
+                        "AudioSourceConfigured", "No Source"
+                    ),
                 )
             )
 
     async_add_entities(entities_to_add)
 
 
-class NaxAes67StreamSelect(NaxEntity, SelectEntity):
-    """Representation of a NAX AES67 Stream Select."""
+class NaxRxStreamSelect(NaxEntity, SelectEntity):
+    """NAX RX stream selector for a single receiver.
+
+    Handles both AES67 and BTS receivers via :class:`NaxStreamEncoding`. The
+    dropdown is filtered to SDP-discovered streams matching the receiver's
+    encoding — selecting an incompatible stream is rejected by the device.
+
+    Works for both zone-backed devices (amps/pre-amps, always AES67) and
+    zone-less devices (XSP, one AES67 + one BTS receiver). When
+    ``zone_output_key`` is omitted, the entity is keyed and named directly
+    off the receiver key.
+    """
 
     def __init__(
         self,
@@ -187,11 +268,13 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
         nax_device_model: str,
         nax_device_firmware_version: str,
         nax_device_serial_number: str,
-        zone_output_key: str,
-        zone_output_data: dict,
-        zone_nax_rx_data: dict,
+        receiver_key: str,
+        encoding: NaxStreamEncoding,
+        initial_name: str,
+        initial_address: str,
         nax_sdp_streams: dict,
         store: Store,
+        zone_output_key: str | None = None,
     ) -> None:
         """Initialize the select entity."""
         super().__init__(
@@ -204,53 +287,59 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
             nax_device_serial_number=nax_device_serial_number,
         )
         self._zone_output_key = zone_output_key
-        self._zone_aes67_receiver_key = zone_output_data.get("NaxRxStream", "")
+        self._receiver_key = receiver_key
+        self._encoding = encoding
         self._nax_sdp_streams = nax_sdp_streams
         self._store = store
+        self._storage_dict_key = _STORAGE_KEY_BY_ENCODING[encoding]
+        self._storage_entry_key = zone_output_key or receiver_key
         self._load_store_task = None
         self._save_store_task = None
 
-        # Initialize attributes
+        # Initialize attributes. Unique-id suffix is the lowercase enum name
+        # ("aes67" / "bts"); for AES67 this matches the pre-refactor format
+        # exactly, preserving entity identity for existing automations.
+        id_part = zone_output_key or receiver_key
         self._attr_unique_id = (
-            f"{mac_address.replace(':', '_').replace('.', '_')}_{zone_output_key}_aes67_stream"
+            f"{mac_address.replace(':', '_').replace('.', '_')}"
+            f"_{id_part}_{encoding.name.lower()}_stream"
         )
         self._attr_entity_registry_visible_default = True
         self._attr_icon = "mdi:multicast"
-        self._zone_name_update(
-            event_name="", message=zone_output_data.get("Name", "Unknown")
-        )
+        self._name_update(event_name="", message=initial_name)
         self._nax_sdp_update(
             event_name="", message=None
         )  # Initialize available options
-        self._zone_aes67_stream_update(
-            event_name="", message=zone_nax_rx_data.get("NetworkAddressStatus", "")
+        self._rx_stream_update(
+            event_name="", message=initial_address
         )  # Initialize current selection
 
         # Subscribe to relevant events
-        api.subscribe(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name",
-            self._zone_name_update,
-        )
+        if zone_output_key is not None:
+            api.subscribe(
+                f"/Device/ZoneOutputs/Zones/{zone_output_key}/Name",
+                self._name_update,
+            )
         api.subscribe(
             "/Device/NaxAudio/NaxSdp/NaxSdpStreams",
             self._nax_sdp_update,
             full_message=True,
         )
         api.subscribe(
-            f"/Device/NaxAudio/NaxRx/NaxRxStreams/{self._zone_aes67_receiver_key}/NetworkAddressStatus",
-            self._zone_aes67_stream_update,
+            f"/Device/NaxAudio/NaxRx/NaxRxStreams/{self._receiver_key}/NetworkAddressStatus",
+            self._rx_stream_update,
         )
 
     @callback
-    def _zone_name_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the zone name."""
-        self._attr_name = f"{message} AES67 Stream"
+    def _name_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the display name prefix."""
+        self._attr_name = f"{message} {self._encoding.name} Stream"
         if self.hass is not None:
             self.async_write_ha_state()
 
     @callback
     def _nax_sdp_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the NAX RX data (available streams)."""
+        """Handle updates to the NAX SDP data (available streams)."""
         if message is not None:
             deepmerge.always_merger.merge(
                 self._nax_sdp_streams,
@@ -261,6 +350,10 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
             )
         options = [{"name": "None", "address": "0.0.0.0"}]
         for stream in self._nax_sdp_streams.values():
+            if not isinstance(stream, dict):
+                continue
+            if stream.get("EncodingFormat") != self._encoding.value:
+                continue
             stream_address = stream.get("NetworkAddressStatus", "")
             stream_name = stream.get("SessionNameStatus", "Unknown")
             if stream_address:
@@ -271,7 +364,6 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
             for stream in sorted(
                 options, key=lambda item: socket.inet_aton(item["address"])
             )
-            # if not self.api.get_aes67_address_is_local(stream["address"]) # Ignore local streams
         ]
 
         # Ensure current selection is still valid
@@ -283,8 +375,8 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
             self.async_write_ha_state()
 
     @callback
-    def _zone_aes67_stream_update(self, event_name: str, message: Any) -> None:
-        """Handle updates to the current AES67 stream selection."""
+    def _rx_stream_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the current receiver stream selection."""
         if not message:
             self._attr_current_option = self.__mux_stream_name(
                 {"name": "None", "address": "0.0.0.0"}
@@ -304,7 +396,7 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
                     )
                     if self.hass is not None and stream_address != "0.0.0.0":
                         self.hass.async_create_task(
-                            self.__async_save_store_last_aes67_stream(stream_address)
+                            self.__async_save_store_last_stream(stream_address)
                         )
                     break
             self._attr_current_option = found_option
@@ -312,7 +404,7 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
             self.async_write_ha_state()
 
     async def async_select_option(self, option: str) -> None:
-        """Change the selected AES67 stream."""
+        """Change the selected receiver stream."""
         if option not in self._attr_options:
             _LOGGER.error("Invalid option selected: %s", option)
             return
@@ -325,7 +417,7 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
                     "NaxAudio": {
                         "NaxRx": {
                             "NaxRxStreams": {
-                                self._zone_aes67_receiver_key: {
+                                self._receiver_key: {
                                     "NetworkAddressRequested": stream_address
                                 }
                             }
@@ -338,25 +430,24 @@ class NaxAes67StreamSelect(NaxEntity, SelectEntity):
     async def async_update(self) -> None:
         """Fetch new state data for this entity."""
         await super().async_update()
-        await self.api.client.ws_get(
-            f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
-        )
+        if self._zone_output_key is not None:
+            await self.api.client.ws_get(
+                f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/Name"
+            )
         await self.api.client.ws_get("/Device/NaxAudio/NaxSdp/NaxSdpStreams")
         await self.api.client.ws_get(
-            f"/Device/NaxAudio/NaxRx/NaxRxStreams/{self._zone_aes67_receiver_key}/NetworkAddressStatus"
+            f"/Device/NaxAudio/NaxRx/NaxRxStreams/{self._receiver_key}/NetworkAddressStatus"
         )
 
     # Helper Functions
-    async def __async_save_store_last_aes67_stream(
-        self, last_aes67_stream: str
-    ) -> None:
-        """Save the last AES67 stream address in storage if it changed."""
+    async def __async_save_store_last_stream(self, last_stream: str) -> None:
+        """Save the last selected stream address in storage if it changed."""
         storage_data = await self._store.async_load()
         if storage_data is None:
             storage_data = {}
-        stream_dict = storage_data.setdefault(STORAGE_LAST_AES67_STREAM_KEY, {})
-        if stream_dict.get(self._zone_output_key) != last_aes67_stream:
-            stream_dict[self._zone_output_key] = last_aes67_stream
+        stream_dict = storage_data.setdefault(self._storage_dict_key, {})
+        if stream_dict.get(self._storage_entry_key) != last_stream:
+            stream_dict[self._storage_entry_key] = last_stream
             await self._store.async_save(storage_data)
 
     def __mux_stream_name(self, stream_arg: dict[str, str] | None) -> str:
@@ -438,3 +529,96 @@ class NaxToneGeneratorModeSelect(NaxEntity, SelectEntity):
         """Fetch new state data for this entity."""
         await super().async_update()
         await self.api.client.ws_get("/Device/ToneGenerator/Mode")
+
+
+class NaxInputSelectionSelect(NaxEntity, SelectEntity):
+    """Select entity for audio input selection on XSP devices."""
+
+    _no_source = "None"
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        output_key: str,
+        input_name_map: dict[str, str],
+        current_source: str,
+    ) -> None:
+        """Initialize the select entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._output_key = output_key
+        self._input_name_map = input_name_map
+        # Reverse map: display name -> input key
+        self._name_to_key = {v: k for k, v in input_name_map.items()}
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}_{output_key}_input_selection"
+        )
+        self._attr_name = f"{nax_device_name} Input Selection"
+        self._attr_icon = "mdi:audio-input-stereo-minijack"
+        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_entity_registry_visible_default = True
+        self._attr_options = [self._no_source] + sorted(input_name_map.values())
+        self._source_update(event_name="", message=current_source)
+
+        api.subscribe(
+            f"/Device/AvMatrixRoutingV2/Config/{output_key}/AudioSourceConfigured",
+            self._source_update,
+        )
+
+    @callback
+    def _source_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the configured audio source."""
+        if message == "No Source" or not message:
+            self._attr_current_option = self._no_source
+        else:
+            self._attr_current_option = self._input_name_map.get(
+                message, self._no_source
+            )
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_select_option(self, option: str) -> None:
+        """Change the audio input selection."""
+        if option not in self._attr_options:
+            _LOGGER.error("Invalid option selected: %s", option)
+            return
+
+        if option == self._no_source:
+            source_value = "No Source"
+        else:
+            source_value = self._name_to_key.get(option, "No Source")
+
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvMatrixRoutingV2": {
+                        "Routes": {
+                            self._output_key: {
+                                "AudioSource": source_value
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/AvMatrixRoutingV2/Config/{self._output_key}/AudioSourceConfigured"
+        )

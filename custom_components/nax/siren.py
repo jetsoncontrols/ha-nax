@@ -14,7 +14,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, safe_get
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,12 +77,13 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
-    door_chimes = (
-        (await api.client.http_get("/Device/DoorChimes") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("DoorChimes", {})
+    door_chimes = safe_get(
+        await api.client.http_get("/Device/DoorChimes") or {},
+        "content", "Device", "DoorChimes", default={}
     )
+
+    if not door_chimes:
+        return
 
     # Create a basic siren entity
     entities = [

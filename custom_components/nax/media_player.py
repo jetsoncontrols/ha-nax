@@ -24,7 +24,7 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
+from .const import DOMAIN, safe_get, STORAGE_LAST_AES67_STREAM_KEY, STORAGE_LAST_INPUT_KEY
 from .mp2 import NaxMP2Client
 from .nax_entity import NaxEntity
 
@@ -89,36 +89,24 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
-    zone_outputs = (
-        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ZoneOutputs", {})
-        .get("Zones", [])
+    zone_outputs = safe_get(
+        await api.client.http_get("/Device/ZoneOutputs/Zones") or {},
+        "content", "Device", "ZoneOutputs", "Zones", default={}
     )
 
-    input_sources = (
-        (await api.client.http_get("/Device/InputSources/Inputs") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("InputSources", {})
-        .get("Inputs", {})
+    input_sources = safe_get(
+        await api.client.http_get("/Device/InputSources/Inputs") or {},
+        "content", "Device", "InputSources", "Inputs", default={}
     )
 
-    matrix_routes = (
-        (await api.client.http_get("/Device/AvMatrixRouting/Routes") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("AvMatrixRouting", {})
-        .get("Routes", {})
+    matrix_routes = safe_get(
+        await api.client.http_get("/Device/AvMatrixRouting/Routes") or {},
+        "content", "Device", "AvMatrixRouting", "Routes", default={}
     )
 
-    nax_tx = (
-        (await api.client.http_get("/Device/NaxAudio/NaxTx") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("NaxAudio", {})
-        .get("NaxTx", {})
+    nax_tx = safe_get(
+        await api.client.http_get("/Device/NaxAudio/NaxTx") or {},
+        "content", "Device", "NaxAudio", "NaxTx", default={}
     )
 
     if not all(
@@ -129,13 +117,12 @@ async def async_setup_entry(
             nax_device_model,
             nax_device_firmware_version,
             nax_device_serial_number,
-            zone_outputs,
-            input_sources,
-            matrix_routes is not None,  # If nothing is switched we get an empty list
-            nax_tx,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
+        return
+
+    if not all([zone_outputs, input_sources, nax_tx]):
         return
 
     # Detect MP2 availability (gracefully returns None if not available)

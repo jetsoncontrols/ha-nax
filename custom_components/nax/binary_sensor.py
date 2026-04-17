@@ -14,7 +14,7 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, safe_get
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,20 +77,14 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
-    source_inputs = (
-        (await api.client.http_get("/Device/InputSources/Inputs") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("InputSources", {})
-        .get("Inputs", [])
+    source_inputs = safe_get(
+        await api.client.http_get("/Device/InputSources/Inputs") or {},
+        "content", "Device", "InputSources", "Inputs", default={}
     )
 
-    zone_outputs = (
-        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ZoneOutputs", {})
-        .get("Zones", [])
+    zone_outputs = safe_get(
+        await api.client.http_get("/Device/ZoneOutputs/Zones") or {},
+        "content", "Device", "ZoneOutputs", "Zones", default={}
     )
 
     if not all(
@@ -101,96 +95,70 @@ async def async_setup_entry(
             nax_device_model,
             nax_device_firmware_version,
             nax_device_serial_number,
-            source_inputs,
-            zone_outputs,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
         raise ConfigEntryNotReady("NAX device not available")
 
-    entities_to_add = [
-        NaxInputSignalBinarySensor(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-            source_input_key=source_input,
-            source_input_data=source_inputs[source_input],
-        )
-        for source_input in source_inputs
-    ]
+    device_params = {
+        "api": api,
+        "mac_address": mac_address,
+        "nax_device_name": nax_device_name,
+        "nax_device_manufacturer": nax_device_manufacturer,
+        "nax_device_model": nax_device_model,
+        "nax_device_firmware_version": nax_device_firmware_version,
+        "nax_device_serial_number": nax_device_serial_number,
+    }
 
-    entities_to_add.extend(
-        [
-            NaxInputClippingBinarySensor(
-                api=api,
-                mac_address=mac_address,
-                nax_device_name=nax_device_name,
-                nax_device_manufacturer=nax_device_manufacturer,
-                nax_device_model=nax_device_model,
-                nax_device_firmware_version=nax_device_firmware_version,
-                nax_device_serial_number=nax_device_serial_number,
+    entities_to_add: list[BinarySensorEntity] = []
+
+    if source_inputs:
+        entities_to_add.extend(
+            NaxInputSignalBinarySensor(
+                **device_params,
                 source_input_key=source_input,
                 source_input_data=source_inputs[source_input],
             )
             for source_input in source_inputs
-        ]
-    )
+        )
 
-    entities_to_add.extend(
-        [
+        entities_to_add.extend(
+            NaxInputClippingBinarySensor(
+                **device_params,
+                source_input_key=source_input,
+                source_input_data=source_inputs[source_input],
+            )
+            for source_input in source_inputs
+        )
+
+    if zone_outputs:
+        entities_to_add.extend(
             NaxZoneOutputSignalBinarySensor(
-                api=api,
-                mac_address=mac_address,
-                nax_device_name=nax_device_name,
-                nax_device_manufacturer=nax_device_manufacturer,
-                nax_device_model=nax_device_model,
-                nax_device_firmware_version=nax_device_firmware_version,
-                nax_device_serial_number=nax_device_serial_number,
+                **device_params,
                 zone_output_key=zone_output,
                 zone_output_data=zone_outputs[zone_output],
             )
             for zone_output in zone_outputs
-        ]
-    )
+        )
 
-    entities_to_add.extend(
-        [
+        entities_to_add.extend(
             NaxZoneOutputCastingBinarySensor(
-                api=api,
-                mac_address=mac_address,
-                nax_device_name=nax_device_name,
-                nax_device_manufacturer=nax_device_manufacturer,
-                nax_device_model=nax_device_model,
-                nax_device_firmware_version=nax_device_firmware_version,
-                nax_device_serial_number=nax_device_serial_number,
+                **device_params,
                 zone_output_key=zone_output,
                 zone_output_data=zone_outputs[zone_output],
             )
             for zone_output in zone_outputs
-        ]
-    )
+        )
 
-    entities_to_add.extend(
-        [
+        entities_to_add.extend(
             NaxZoneOutputSpeakerClippingBinarySensor(
-                api=api,
-                mac_address=mac_address,
-                nax_device_name=nax_device_name,
-                nax_device_manufacturer=nax_device_manufacturer,
-                nax_device_model=nax_device_model,
-                nax_device_firmware_version=nax_device_firmware_version,
-                nax_device_serial_number=nax_device_serial_number,
+                **device_params,
                 zone_output_key=zone_output,
                 zone_output_data=zone_outputs[zone_output],
             )
             for zone_output in zone_outputs
             if zone_outputs[zone_output].get("ZoneAudio", {}).get("IsAmplificationSupported", False)
-        ]
-    )
+        )
 
     async_add_entities(entities_to_add)
 
