@@ -89,6 +89,7 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
+    # Zone-based data (amps/pre-amps)
     zone_outputs = safe_get(
         await api.client.http_get("/Device/ZoneOutputs/Zones") or {},
         "content", "Device", "ZoneOutputs", "Zones", default={}
@@ -109,6 +110,17 @@ async def async_setup_entry(
         "content", "Device", "NaxAudio", "NaxTx", default={}
     )
 
+    # XSP-style data (matrix router devices — no zones)
+    av_matrix_routing_v2_config = safe_get(
+        await api.client.http_get("/Device/AvMatrixRoutingV2/Config") or {},
+        "content", "Device", "AvMatrixRoutingV2", "Config", default={}
+    )
+
+    avio_v2_inputs = safe_get(
+        await api.client.http_get("/Device/AvioV2/Inputs") or {},
+        "content", "Device", "AvioV2", "Inputs", default={}
+    )
+
     if not all(
         [
             mac_address,
@@ -122,39 +134,68 @@ async def async_setup_entry(
         _LOGGER.error("Could not retrieve required NAX device information")
         return
 
-    if not all([zone_outputs, input_sources, nax_tx]):
-        return
+    device_params = {
+        "api": api,
+        "mac_address": mac_address,
+        "nax_device_name": nax_device_name,
+        "nax_device_manufacturer": nax_device_manufacturer,
+        "nax_device_model": nax_device_model,
+        "nax_device_firmware_version": nax_device_firmware_version,
+        "nax_device_serial_number": nax_device_serial_number,
+    }
 
-    # Detect MP2 availability (gracefully returns None if not available)
-    mp2_info = await NaxMP2Client.detect(api.client, zone_outputs, input_sources)
+    entities_to_add: list[MediaPlayerEntity] = []
 
-    entities_to_add = [
-        NaxMediaPlayer(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-            zone_output_key=zone_output,
-            zone_output_data=zone_outputs[zone_output],
-            input_sources_data=input_sources,
-            zone_matrix_data=matrix_routes.get(zone_output, {}),
-            nax_tx_data=nax_tx,
-            store=store,
-            mp2_player_id=(
-                mp2_info["player_map"].get(zone_output) if mp2_info else None
-            ),
-            mp2_profile_key=(
-                mp2_info["profile_key"] if mp2_info else None
-            ),
-            mp2_streaming_input_key=(
-                mp2_info["streaming_input_map"].get(zone_output) if mp2_info else None
-            ),
-        )
-        for zone_output in zone_outputs
-    ]
+    # Zone-based media players (amps/pre-amps)
+    if zone_outputs and input_sources and nax_tx:
+        # Detect MP2 availability (gracefully returns None if not available)
+        mp2_info = await NaxMP2Client.detect(api.client, zone_outputs, input_sources)
+        for zone_output in zone_outputs:
+            entities_to_add.append(
+                NaxMediaPlayer(
+                    **device_params,
+                    zone_output_key=zone_output,
+                    zone_output_data=zone_outputs[zone_output],
+                    input_sources_data=input_sources,
+                    zone_matrix_data=matrix_routes.get(zone_output, {}),
+                    nax_tx_data=nax_tx,
+                    store=store,
+                    mp2_player_id=(
+                        mp2_info["player_map"].get(zone_output) if mp2_info else None
+                    ),
+                    mp2_profile_key=(
+                        mp2_info["profile_key"] if mp2_info else None
+                    ),
+                    mp2_streaming_input_key=(
+                        mp2_info["streaming_input_map"].get(zone_output) if mp2_info else None
+                    ),
+                )
+            )
+    # XSP-style media players (AvMatrixRoutingV2 — one per output)
+    elif av_matrix_routing_v2_config and avio_v2_inputs:
+        input_name_map: dict[str, str] = {}
+        for input_key, input_data in avio_v2_inputs.items():
+            if isinstance(input_data, dict) and input_data.get(
+                "Capabilities", {}
+            ).get("IsAudioRoutingSupported", False):
+                input_name_map[input_key] = input_data.get(
+                    "UserSpecifiedName", input_key
+                )
+
+        for output_key, output_config in av_matrix_routing_v2_config.items():
+            if not isinstance(output_config, dict):
+                continue
+            entities_to_add.append(
+                NaxOutputMediaPlayer(
+                    **device_params,
+                    output_key=output_key,
+                    input_name_map=input_name_map,
+                    current_source=output_config.get(
+                        "AudioSourceConfigured", "No Source"
+                    ),
+                    store=store,
+                )
+            )
 
     async_add_entities(entities_to_add)
 
@@ -770,3 +811,143 @@ class NaxMediaPlayer(NaxEntity, MediaPlayerEntity):
         return storage_data.get(STORAGE_LAST_AES67_STREAM_KEY, {}).get(
             self._zone_output_key
         )
+
+
+class NaxOutputMediaPlayer(NaxEntity, MediaPlayerEntity):
+    """Media player for XSP-style NAX devices.
+
+    Wraps a single AvMatrixRoutingV2 output as a media player, exposing
+    power (on = restore last input from storage, off = "No Source") and
+    source selection. Functionally overlaps with :class:`NaxInputSelectionSelect`
+    in ``select.py``; exists because some routing tooling expects a
+    ``media_player`` entity rather than a ``select``.
+    """
+
+    _no_source_value = "No Source"
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        output_key: str,
+        input_name_map: dict[str, str],
+        current_source: str,
+        store: Store,
+    ) -> None:
+        """Initialize the media player."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._output_key = output_key
+        self._input_name_map = input_name_map
+        self._name_to_key = {v: k for k, v in input_name_map.items()}
+        self._store = store
+        self._save_store_task: asyncio.Task | None = None
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}"
+            f"_{output_key}_media_player"
+        )
+        self._attr_name = f"{nax_device_name} Media Player"
+        self._attr_icon = "mdi:audio-video"
+        self._attr_device_class = MediaPlayerDeviceClass.SPEAKER
+        self._attr_entity_registry_visible_default = True
+        self._attr_supported_features = (
+            MediaPlayerEntityFeature.TURN_ON
+            | MediaPlayerEntityFeature.TURN_OFF
+            | MediaPlayerEntityFeature.SELECT_SOURCE
+        )
+        self._attr_source_list = sorted(input_name_map.values())
+        self._source_update(event_name="", message=current_source)
+
+        api.subscribe(
+            f"/Device/AvMatrixRoutingV2/Config/{output_key}/AudioSourceConfigured",
+            self._source_update,
+        )
+
+    @callback
+    def _source_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the configured audio source."""
+        if message == self._no_source_value or not message:
+            self._attr_source = None
+            self._attr_state = MediaPlayerState.OFF
+        else:
+            self._attr_source = self._input_name_map.get(message, message)
+            self._attr_state = MediaPlayerState.PLAYING
+            self._save_store_task = asyncio.create_task(
+                self.__async_save_store_last_input(message)
+            )
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_select_source(self, source: str) -> None:
+        """Select input source by display name."""
+        source_key = self._name_to_key.get(source)
+        if source_key is None:
+            _LOGGER.error("Invalid source selected: %s", source)
+            return
+        await self.__set_source(source_key)
+
+    async def async_turn_on(self) -> None:
+        """Turn on: restore last-selected input, or fall back to first available."""
+        last_input = await self.__async_load_store_last_input()
+        if last_input and last_input in self._input_name_map:
+            await self.__set_source(last_input)
+        elif self._input_name_map:
+            await self.__set_source(next(iter(self._input_name_map)))
+
+    async def async_turn_off(self) -> None:
+        """Turn off: unroute this output."""
+        await self.__set_source(self._no_source_value)
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/AvMatrixRoutingV2/Config/{self._output_key}/AudioSourceConfigured"
+        )
+
+    # Helpers
+    async def __set_source(self, source_value: str) -> None:
+        """Post an AudioSource change to the AvMatrixRoutingV2 Routes endpoint."""
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvMatrixRoutingV2": {
+                        "Routes": {
+                            self._output_key: {
+                                "AudioSource": source_value
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def __async_save_store_last_input(self, last_input: str) -> None:
+        """Persist the most recent (non-off) input for this output."""
+        storage_data = await self._store.async_load()
+        if storage_data is None:
+            storage_data = {}
+        last_input_dict = storage_data.setdefault(STORAGE_LAST_INPUT_KEY, {})
+        if last_input_dict.get(self._output_key) != last_input:
+            last_input_dict[self._output_key] = last_input
+            await self._store.async_save(storage_data)
+
+    async def __async_load_store_last_input(self) -> str | None:
+        """Return the most recently configured input for this output, if any."""
+        storage_data = await self._store.async_load()
+        if storage_data is None:
+            return None
+        return storage_data.get(STORAGE_LAST_INPUT_KEY, {}).get(self._output_key)
