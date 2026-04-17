@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 import logging
 from typing import Any
 
@@ -16,6 +17,34 @@ from .const import DOMAIN, safe_get
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class NaxAudioField(Enum):
+    """Per-port digital audio field exposed by ``AvioV2`` ports.
+
+    Enum value is the literal JSON key under
+    ``{InputInfo|OutputInfo}/Ports/Port1/Audio/Digital/``.
+    Enum name is used to form the user-facing label ("Audio Format" /
+    "Audio Channels") and the unique-id suffix.
+    """
+
+    FORMAT = "Format"
+    CHANNELS = "Channels"
+
+    @property
+    def label(self) -> str:
+        return f"Audio {self.name.title()}"
+
+    @property
+    def id_suffix(self) -> str:
+        return f"audio_{self.name.lower()}"
+
+    @property
+    def icon(self) -> str:
+        return {
+            NaxAudioField.FORMAT: "mdi:waveform",
+            NaxAudioField.CHANNELS: "mdi:surround-sound",
+        }[self]
 
 
 async def async_setup_entry(
@@ -103,6 +132,11 @@ async def async_setup_entry(
         "content", "Device", "AvioV2", "Inputs", default={}
     )
 
+    avio_v2_outputs = safe_get(
+        await api.client.http_get("/Device/AvioV2/Outputs") or {},
+        "content", "Device", "AvioV2", "Outputs", default={}
+    )
+
     if not av_matrix_routing_v2_config or not avio_v2_inputs:
         return
 
@@ -143,6 +177,38 @@ async def async_setup_entry(
                 current_source=current_route,
             )
         )
+
+    # Per-port audio format/channels diagnostic sensors — inputs + outputs
+    for direction, info_key, ports_dict in (
+        ("Input", "InputInfo", avio_v2_inputs),
+        ("Output", "OutputInfo", avio_v2_outputs),
+    ):
+        for port_key, port_data in ports_dict.items():
+            if not isinstance(port_data, dict):
+                continue
+            if not port_data.get("Capabilities", {}).get(
+                "IsAudioRoutingSupported", False
+            ):
+                continue
+            port_name = port_data.get("UserSpecifiedName", port_key)
+            digital = (
+                port_data.get(info_key, {})
+                .get("Ports", {})
+                .get("Port1", {})
+                .get("Audio", {})
+                .get("Digital", {})
+            )
+            for field in (NaxAudioField.FORMAT, NaxAudioField.CHANNELS):
+                entities_to_add.append(
+                    NaxPortAudioSensor(
+                        **device_params,
+                        direction=direction,
+                        port_key=port_key,
+                        port_name=port_name,
+                        field=field,
+                        initial_value=digital.get(field.value),
+                    )
+                )
 
     async_add_entities(entities_to_add)
 
@@ -206,3 +272,74 @@ class NaxActiveAudioSelectionSensor(NaxEntity, SensorEntity):
         await self.api.client.ws_get(
             f"/Device/AvMatrixRoutingV2/Routes/{self._output_key}/AudioSource"
         )
+
+
+class NaxPortAudioSensor(NaxEntity, SensorEntity):
+    """Diagnostic sensor reporting a single Audio/Digital field on an AvioV2 port.
+
+    Covers both inputs and outputs and both fields (Format, Channels) via
+    :class:`NaxAudioField`. One sensor entity per (port, field) pair.
+    """
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        direction: str,
+        port_key: str,
+        port_name: str,
+        field: NaxAudioField,
+        initial_value: Any,
+    ) -> None:
+        """Initialize the sensor entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._direction = direction
+        self._port_key = port_key
+        self._field = field
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}"
+            f"_{port_key}_{field.id_suffix}"
+        )
+        self._attr_name = (
+            f"{nax_device_name} {direction} {port_name} {field.label}"
+        )
+        self._attr_icon = field.icon
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_registry_visible_default = True
+        self._field_update(event_name="", message=initial_value)
+
+        api.subscribe(self.__path, self._field_update)
+
+    @property
+    def __path(self) -> str:
+        """API path for this port/field's value."""
+        return (
+            f"/Device/AvioV2/{self._direction}s/{self._port_key}"
+            f"/{self._direction}Info/Ports/Port1/Audio/Digital/{self._field.value}"
+        )
+
+    @callback
+    def _field_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the audio field value."""
+        self._attr_native_value = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(self.__path)
