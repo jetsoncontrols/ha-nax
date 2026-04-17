@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, safe_get
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,27 +76,19 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
-    source_inputs = (
-        (await api.client.http_get("/Device/InputSources/Inputs") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("InputSources", {})
-        .get("Inputs", [])
+    source_inputs = safe_get(
+        await api.client.http_get("/Device/InputSources/Inputs") or {},
+        "content", "Device", "InputSources", "Inputs", default={}
     )
 
-    zone_outputs = (
-        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ZoneOutputs", {})
-        .get("Zones", [])
+    zone_outputs = safe_get(
+        await api.client.http_get("/Device/ZoneOutputs/Zones") or {},
+        "content", "Device", "ZoneOutputs", "Zones", default={}
     )
 
-    tone_generator = (
-        (await api.client.http_get("/Device/ToneGenerator") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ToneGenerator", {})
+    tone_generator = safe_get(
+        await api.client.http_get("/Device/ToneGenerator") or {},
+        "content", "Device", "ToneGenerator", default={}
     )
 
     if not all(
@@ -107,12 +99,12 @@ async def async_setup_entry(
             nax_device_model,
             nax_device_firmware_version,
             nax_device_serial_number,
-            source_inputs,
-            zone_outputs,
-            tone_generator is not None,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
+        return
+
+    if not all([source_inputs, zone_outputs, tone_generator]):
         return
 
     entities_to_add = [

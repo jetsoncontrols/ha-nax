@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, safe_get
 from .nax_entity import NaxEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -76,19 +76,24 @@ async def async_setup_entry(
         .get("SerialNumber")
     )
 
-    tone_generator = (
-        (await api.client.http_get("/Device/ToneGenerator") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ToneGenerator", {})
+    tone_generator = safe_get(
+        await api.client.http_get("/Device/ToneGenerator") or {},
+        "content", "Device", "ToneGenerator", default={}
     )
 
-    zone_outputs = (
-        (await api.client.http_get("/Device/ZoneOutputs/Zones") or {})
-        .get("content", {})
-        .get("Device", {})
-        .get("ZoneOutputs", {})
-        .get("Zones", [])
+    zone_outputs = safe_get(
+        await api.client.http_get("/Device/ZoneOutputs/Zones") or {},
+        "content", "Device", "ZoneOutputs", "Zones", default={}
+    )
+
+    av_matrix_routing_v2 = safe_get(
+        await api.client.http_get("/Device/AvMatrixRoutingV2") or {},
+        "content", "Device", "AvMatrixRoutingV2", default={}
+    )
+
+    avio_v2_outputs = safe_get(
+        await api.client.http_get("/Device/AvioV2/Outputs") or {},
+        "content", "Device", "AvioV2", "Outputs", default={}
     )
 
     if not all(
@@ -99,53 +104,70 @@ async def async_setup_entry(
             nax_device_model,
             nax_device_firmware_version,
             nax_device_serial_number,
-            tone_generator is not None,
-            zone_outputs,
         ]
     ):
         _LOGGER.error("Could not retrieve required NAX device information")
         return
 
-    entities_to_add = [
-        NaxToneGeneratorLeftChannelSwitch(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-            tone_generator_data=tone_generator,
-        ),
-        NaxToneGeneratorRightChannelSwitch(
-            api=api,
-            mac_address=mac_address,
-            nax_device_name=nax_device_name,
-            nax_device_manufacturer=nax_device_manufacturer,
-            nax_device_model=nax_device_model,
-            nax_device_firmware_version=nax_device_firmware_version,
-            nax_device_serial_number=nax_device_serial_number,
-            tone_generator_data=tone_generator,
-        ),
-    ]
+    device_params = {
+        "api": api,
+        "mac_address": mac_address,
+        "nax_device_name": nax_device_name,
+        "nax_device_manufacturer": nax_device_manufacturer,
+        "nax_device_model": nax_device_model,
+        "nax_device_firmware_version": nax_device_firmware_version,
+        "nax_device_serial_number": nax_device_serial_number,
+    }
 
-    # Add zone test tone switches
-    entities_to_add.extend(
-        [
+    entities_to_add: list[SwitchEntity] = []
+
+    # Tone generator switches (standard NAX devices)
+    if tone_generator:
+        entities_to_add.extend(
+            [
+                NaxToneGeneratorLeftChannelSwitch(
+                    **device_params,
+                    tone_generator_data=tone_generator,
+                ),
+                NaxToneGeneratorRightChannelSwitch(
+                    **device_params,
+                    tone_generator_data=tone_generator,
+                ),
+            ]
+        )
+
+    # Zone test tone switches (standard NAX devices)
+    if zone_outputs:
+        entities_to_add.extend(
             NaxZoneTestToneSwitch(
-                api=api,
-                mac_address=mac_address,
-                nax_device_name=nax_device_name,
-                nax_device_manufacturer=nax_device_manufacturer,
-                nax_device_model=nax_device_model,
-                nax_device_firmware_version=nax_device_firmware_version,
-                nax_device_serial_number=nax_device_serial_number,
+                **device_params,
                 zone_output_key=zone_output,
                 zone_output_data=zone_outputs[zone_output],
             )
             for zone_output in zone_outputs
-        ]
-    )
+        )
+
+    # Auto audio routing switch (XSP devices with AvMatrixRoutingV2)
+    if "IsAudioAutoRoutingEnabled" in av_matrix_routing_v2:
+        entities_to_add.append(
+            NaxAutoAudioRoutingSwitch(
+                **device_params,
+                is_enabled=av_matrix_routing_v2["IsAudioAutoRoutingEnabled"],
+            )
+        )
+
+    # Audio only mode switches (XSP devices with AvioV2 outputs)
+    for output_key, output_data in avio_v2_outputs.items():
+        audio_info = output_data.get("OutputInfo", {}).get("Audio", {})
+        if "IsAudioOnlyModeEnabled" in audio_info:
+            entities_to_add.append(
+                NaxAudioOnlyModeSwitch(
+                    **device_params,
+                    output_key=output_key,
+                    output_name=output_data.get("UserSpecifiedName", output_key),
+                    is_enabled=audio_info["IsAudioOnlyModeEnabled"],
+                )
+            )
 
     async_add_entities(entities_to_add)
 
@@ -391,4 +413,171 @@ class NaxZoneTestToneSwitch(NaxEntity, SwitchEntity):
         )
         await self.api.client.ws_get(
             f"/Device/ZoneOutputs/Zones/{self._zone_output_key}/ZoneAudio/IsTestToneActive"
+        )
+
+
+class NaxAutoAudioRoutingSwitch(NaxEntity, SwitchEntity):
+    """Switch for auto audio routing on XSP devices."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        is_enabled: bool,
+    ) -> None:
+        """Initialize the switch entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}_auto_audio_routing"
+        )
+        self._attr_name = f"{nax_device_name} Auto Audio Routing"
+        self._attr_icon = "mdi:route"
+        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_entity_registry_visible_default = True
+        self._auto_audio_routing_update(event_name="", message=is_enabled)
+
+        api.subscribe(
+            "/Device/AvMatrixRoutingV2/IsAudioAutoRoutingEnabled",
+            self._auto_audio_routing_update,
+        )
+
+    @callback
+    def _auto_audio_routing_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the auto audio routing state."""
+        self._attr_is_on = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable auto audio routing."""
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvMatrixRoutingV2": {"IsAudioAutoRoutingEnabled": True}
+                }
+            }
+        )
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable auto audio routing."""
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvMatrixRoutingV2": {"IsAudioAutoRoutingEnabled": False}
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            "/Device/AvMatrixRoutingV2/IsAudioAutoRoutingEnabled"
+        )
+
+
+class NaxAudioOnlyModeSwitch(NaxEntity, SwitchEntity):
+    """Switch for audio only mode on XSP device outputs."""
+
+    def __init__(
+        self,
+        api: DataEventManager,
+        mac_address: str,
+        nax_device_name: str,
+        nax_device_manufacturer: str,
+        nax_device_model: str,
+        nax_device_firmware_version: str,
+        nax_device_serial_number: str,
+        output_key: str,
+        output_name: str,
+        is_enabled: bool,
+    ) -> None:
+        """Initialize the switch entity."""
+        super().__init__(
+            api=api,
+            mac_address=mac_address,
+            nax_device_name=nax_device_name,
+            nax_device_manufacturer=nax_device_manufacturer,
+            nax_device_model=nax_device_model,
+            nax_device_firmware_version=nax_device_firmware_version,
+            nax_device_serial_number=nax_device_serial_number,
+        )
+        self._output_key = output_key
+
+        self._attr_unique_id = (
+            f"{mac_address.replace(':', '_').replace('.', '_')}_{output_key}_audio_only_mode"
+        )
+        self._attr_name = f"{nax_device_name} {output_name} Audio Only Mode"
+        self._attr_icon = "mdi:volume-off"
+        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_entity_registry_visible_default = True
+        self._audio_only_mode_update(event_name="", message=is_enabled)
+
+        api.subscribe(
+            f"/Device/AvioV2/Outputs/{output_key}/OutputInfo/Audio/IsAudioOnlyModeEnabled",
+            self._audio_only_mode_update,
+        )
+
+    @callback
+    def _audio_only_mode_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the audio only mode state."""
+        self._attr_is_on = message
+        if self.hass is not None:
+            self.async_write_ha_state()
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable audio only mode."""
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvioV2": {
+                        "Outputs": {
+                            self._output_key: {
+                                "OutputInfo": {
+                                    "Audio": {"IsAudioOnlyModeEnabled": True}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable audio only mode."""
+        await self.api.client.ws_post(
+            payload={
+                "Device": {
+                    "AvioV2": {
+                        "Outputs": {
+                            self._output_key: {
+                                "OutputInfo": {
+                                    "Audio": {"IsAudioOnlyModeEnabled": False}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for this entity."""
+        await super().async_update()
+        await self.api.client.ws_get(
+            f"/Device/AvioV2/Outputs/{self._output_key}/OutputInfo/Audio/IsAudioOnlyModeEnabled"
         )

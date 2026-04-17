@@ -16,6 +16,7 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
     STORAGE_LAST_AES67_STREAM_KEY,
+    STORAGE_LAST_BTS_STREAM_KEY,
     STORAGE_LAST_INPUT_KEY,
     STORAGE_VERSION,
 )
@@ -26,10 +27,11 @@ PLATFORMS = sorted(
     [
         Platform.MEDIA_PLAYER,
         Platform.SELECT,
+        Platform.SENSOR,
         Platform.BINARY_SENSOR,
         Platform.SIREN,
         Platform.NUMBER,
-        Platform.SWITCH
+        Platform.SWITCH,
     ]
 )
 
@@ -53,6 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         storage_data = {
             STORAGE_LAST_INPUT_KEY: dict[str, str](),
             STORAGE_LAST_AES67_STREAM_KEY: dict[str, str](),
+            STORAGE_LAST_BTS_STREAM_KEY: dict[str, str](),
         }
         await store.async_save(storage_data)
     entry.runtime_data = store
