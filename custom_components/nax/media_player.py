@@ -182,6 +182,23 @@ async def async_setup_entry(
                     "UserSpecifiedName", input_key
                 )
 
+        # XSP has a single AES67 output stream shared by all inputs; find it so
+        # every source name can be muxed with that one address for downstream demux.
+        nax_tx_streams = safe_get(
+            await api.client.http_get("/Device/NaxAudio/NaxTx/NaxTxStreams") or {},
+            "content", "Device", "NaxAudio", "NaxTx", "NaxTxStreams", default={}
+        )
+        tx_stream_key: str | None = None
+        tx_stream_address: str = ""
+        for stream_key, stream_data in nax_tx_streams.items():
+            if (
+                isinstance(stream_data, dict)
+                and stream_data.get("EncodingFormat") == "Lpcm"
+            ):
+                tx_stream_key = stream_key
+                tx_stream_address = stream_data.get("NetworkAddressStatus", "") or ""
+                break
+
         for output_key, output_config in av_matrix_routing_v2_config.items():
             if not isinstance(output_config, dict):
                 continue
@@ -193,6 +210,8 @@ async def async_setup_entry(
                     current_source=output_config.get(
                         "AudioSourceConfigured", "No Source"
                     ),
+                    tx_stream_key=tx_stream_key,
+                    tx_stream_address=tx_stream_address,
                     store=store,
                 )
             )
@@ -837,6 +856,8 @@ class NaxOutputMediaPlayer(NaxEntity, MediaPlayerEntity):
         output_key: str,
         input_name_map: dict[str, str],
         current_source: str,
+        tx_stream_key: str | None,
+        tx_stream_address: str,
         store: Store,
     ) -> None:
         """Initialize the media player."""
@@ -851,7 +872,9 @@ class NaxOutputMediaPlayer(NaxEntity, MediaPlayerEntity):
         )
         self._output_key = output_key
         self._input_name_map = input_name_map
-        self._name_to_key = {v: k for k, v in input_name_map.items()}
+        self._tx_stream_key = tx_stream_key
+        self._tx_stream_address = tx_stream_address
+        self._current_source_key: str | None = None
         self._store = store
         self._save_store_task: asyncio.Task | None = None
 
@@ -868,22 +891,29 @@ class NaxOutputMediaPlayer(NaxEntity, MediaPlayerEntity):
             | MediaPlayerEntityFeature.TURN_OFF
             | MediaPlayerEntityFeature.SELECT_SOURCE
         )
-        self._attr_source_list = sorted(input_name_map.values())
+        self._rebuild_source_list()
         self._source_update(event_name="", message=current_source)
 
         api.subscribe(
             f"/Device/AvMatrixRoutingV2/Config/{output_key}/AudioSourceConfigured",
             self._source_update,
         )
+        if tx_stream_key:
+            api.subscribe(
+                f"/Device/NaxAudio/NaxTx/NaxTxStreams/{tx_stream_key}/NetworkAddressStatus",
+                self._tx_address_update,
+            )
 
     @callback
     def _source_update(self, event_name: str, message: Any) -> None:
         """Handle updates to the configured audio source."""
         if message == self._no_source_value or not message:
+            self._current_source_key = None
             self._attr_source = None
             self._attr_state = MediaPlayerState.OFF
         else:
-            self._attr_source = self._input_name_map.get(message, message)
+            self._current_source_key = message
+            self._attr_source = self.__mux_source_name(message)
             self._attr_state = MediaPlayerState.PLAYING
             self._save_store_task = asyncio.create_task(
                 self.__async_save_store_last_input(message)
@@ -891,10 +921,24 @@ class NaxOutputMediaPlayer(NaxEntity, MediaPlayerEntity):
         if self.hass is not None:
             self.async_write_ha_state()
 
+    @callback
+    def _tx_address_update(self, event_name: str, message: Any) -> None:
+        """Handle updates to the single XSP AES67 output stream address."""
+        if not isinstance(message, str):
+            return
+        if message == self._tx_stream_address:
+            return
+        self._tx_stream_address = message
+        self._rebuild_source_list()
+        if self._current_source_key:
+            self._attr_source = self.__mux_source_name(self._current_source_key)
+        if self.hass is not None:
+            self.async_write_ha_state()
+
     async def async_select_source(self, source: str) -> None:
-        """Select input source by display name."""
-        source_key = self._name_to_key.get(source)
-        if source_key is None:
+        """Select input source by muxed display name."""
+        source_key = self.__demux_source_name(source)
+        if not source_key or source_key not in self._input_name_map:
             _LOGGER.error("Invalid source selected: %s", source)
             return
         await self.__set_source(source_key)
@@ -917,6 +961,26 @@ class NaxOutputMediaPlayer(NaxEntity, MediaPlayerEntity):
         await self.api.client.ws_get(
             f"/Device/AvMatrixRoutingV2/Config/{self._output_key}/AudioSourceConfigured"
         )
+        if self._tx_stream_key:
+            await self.api.client.ws_get(
+                f"/Device/NaxAudio/NaxTx/NaxTxStreams/{self._tx_stream_key}/NetworkAddressStatus"
+            )
+
+    def _rebuild_source_list(self) -> None:
+        """Build source_list using the shared XSP output AES67 address."""
+        self._attr_source_list = sorted(
+            self.__mux_source_name(key) for key in self._input_name_map
+        )
+
+    def __mux_source_name(self, input_source_key: str) -> str:
+        """Format a source name to match the NaxMediaPlayer mux for downstream demux."""
+        name = self._input_name_map.get(input_source_key, input_source_key)
+        return f"{name} ({input_source_key}, {self._tx_stream_address})"
+
+    def __demux_source_name(self, source_name: str) -> str:
+        if not source_name or " (" not in source_name:
+            return ""
+        return source_name.split(" (", 1)[1][:-1].split(", ", 1)[0]
 
     # Helpers
     async def __set_source(self, source_value: str) -> None:
